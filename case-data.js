@@ -1,0 +1,547 @@
+/* Browser-only case data and workbook exporters. */
+const Cases = (() => {
+  const vendors = ['華茂', '拍檔'];
+  const sapName = 'VK「SAP匯入擋(銷售)(4~6)」';
+  const sapHeaders = ['', 'SHOP ID', '報價單編號', 'SAP 銷售(全)', '正式區銷項後勤', '銷售發票',
+    '華茂下單日期', '商家名稱', '順立開出發票號碼', '發票日期', 'SAP 採購', '正式區進項交貨', '採購發票',
+    '設備', '銷售價(含稅)', '數量', '試算未稅', '請款總金額', '採購價(含稅)', '採購價(未稅)',
+    '出貨廠商', '出貨廠商ID', 'vk請款單', '峰潮下單日期', '請款憑證', '憑證日期', '請款日期', '', '備註'];
+  const hmHeaders = ['預計撥款日', '請款單號', '發票號碼', '發票日期', '說明', '金額', '已請款', '已撥款', '對帳單', '備註'];
+  const billHeaders = ['來源列', 'SHOP ID', '報價單編號', '公司名稱', '供應商', '請款描述', '發票號碼',
+    '發票日期', '金額（未稅）', '金額（含稅）', '處理狀態', '請款單號', '請款日期', '憑證來源', '備註'];
+  const create = () => ({version: 1, cases: [], invoices: [], quotes: [], sap: null, partnerCode: ''});
+  const initCase = pos => ({id: crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), x => x.toString(16).padStart(2, '0')).join(''),
+    pos, orders: {}, docs: [], sale: {}, bills: {}});
+  const desc = (order, vendor) => {
+    const agg = Object.create(null);
+    for (const d of order.pos.devices) {
+      if (vendorForItem(d.item) !== vendor || d.qty <= 0) continue;
+      agg[d.item] = (agg[d.item] || 0) + d.qty;
+    }
+    if (!order.pos.merchant) return '';
+    if (vendor === '華茂') return hmDescription(agg, order.pos.merchant);
+    const parts = Object.entries(agg).map(([item, qty]) => PARTNER_ITEM_LABEL[item] + '*' + qty + '台');
+    return parts.length ? '拍檔出貨' + parts.join('+') + '至' + order.pos.merchant : '';
+  };
+  const hasVendor = (order, vendor) => order.pos.devices.some(d => vendorForItem(d.item) === vendor);
+  const quoteKey = value => norm(value).replace(/^qu(?=\d{11}$)/, '');
+  const key = pos => JSON.stringify([quoteKey(pos.quote), norm(pos.shopId), norm(pos.merchant)]);
+  const signature = ({source, sheet, row, ...fields}) => JSON.stringify(fields);
+  const populated = value => value !== undefined && value !== null && value !== '';
+  function requestNo(value) {
+    const pr = cleanRequestNo(value);
+    return /^(待確認|無需請款|未請款|未申請|無設備|不請款|已請款)$/i.test(pr) ? '' : pr;
+  }
+  function posRows(wb, source) {
+    const sheet = getPosSheet(wb);
+    const data = sheetRows(wb, sheet);
+    validatePosColumns(data,true);
+    const headers=new Set(data.headers.map(norm));
+    for(let slot=1;slot<=5;slot++){
+      if(hasHeader(headers,['設備'+slot])&&!hasHeader(headers,['設備'+slot+'數量',slot===1?'數量':'數量_'+(slot-1)]))
+        throw Error('「下單設備資料」缺少設備'+slot+'對應的數量欄。');
+    }
+    return data.rows.map(row => {
+      const devices = [], issues = [];
+      for (let slot = 1; slot <= 5; slot++) {
+        const raw = clean(findVal(row, ['設備' + slot]));
+        if (!raw) continue;
+        const value = clean(findVal(row, ['設備' + slot + '數量', slot === 1 ? '數量' : '數量_' + (slot - 1)]));
+        const qty = Number(value.replace(/,/g, ''));
+        if (!value || !Number.isSafeInteger(qty) || qty < 0) {
+          issues.push('設備' + slot + '「' + raw + '」的數量待確認（' + (value || '空白') + '）');
+          devices.push({slot, item: standardItem(raw), raw, qty: null});
+        } else if (qty > 0) devices.push({slot, item: standardItem(raw), raw, qty});
+      }
+      const info = getVendorContactInfo(row);
+      return {...info, quote: clean(findVal(row, ['報價單編號', '報價單號'])), shopId: clean(findVal(row, ['SHOP ID'])),
+        request: requestNo(findVal(row, ['設備請款單號', '請款單號', '請款單編號'])),
+        installRequest: requestNo(findVal(row, ['裝機請款單號'])),
+        hmDate: excelDateToText(findVal(row, ['華茂下單日期'])), peakDate: excelDateToText(findVal(row, ['峰潮下單日期'])),
+        notes: clean(findVal(row, ['備註'])), row: row.__rowNum, source, sheet, devices, issues};
+    }).filter(p => p.merchant || p.quote || p.devices.length);
+  }
+  function previewPos(state, rows) {
+    const used = new Set();
+    const index = new Map(), quotes = new Map();
+    for (const order of state.cases) {
+      const k = key(order.pos);
+      if (!index.has(k)) index.set(k, []);
+      index.get(k).push(order);
+      const q = quoteKey(order.pos.quote);
+      if (!q) continue;
+      if (!quotes.has(q)) quotes.set(q, []);
+      quotes.get(q).push(order);
+    }
+    const seen = new Map();
+    return rows.map(pos => {
+      const k = key(pos);
+      const peers = index.get(k) || [];
+      const exact = peers.filter(c => !used.has(c.id) && signature(c.pos) === signature(pos));
+      const matching = exact.find(c => c.pos.row === pos.row) || exact[0];
+      const earlier = seen.get(k);
+      seen.set(k, pos);
+      if (matching) {
+        used.add(matching.id);
+        return {type: 'same', pos, old: matching};
+      }
+      const related = (quotes.get(quoteKey(pos.quote)) || []).filter(c =>
+        (pos.shopId && c.pos.shopId && norm(pos.shopId) === norm(c.pos.shopId)) ||
+        (pos.merchant && norm(pos.merchant) === norm(c.pos.merchant) && (!pos.shopId || !c.pos.shopId)));
+      const candidates = [...new Set([...peers, ...related])];
+      if (candidates.length || earlier) return {type: 'conflict', pos, candidates, earlier};
+      return {type: 'new', pos};
+    });
+  }
+  function commitPos(state, preview, choices) {
+    const replaced = new Set();
+    preview.forEach((entry, i) => {
+      if (entry.type === 'new' || choices.get(i) === 'add') state.cases.push(initCase(entry.pos));
+      if (entry.type !== 'conflict' || !choices.get(i)?.startsWith('case:')) return;
+      const old = state.cases.find(c => c.id === choices.get(i).slice(5));
+      if (!old || replaced.has(old.id)) throw Error('同一案件不可同時套用兩筆更新。');
+      replaced.add(old.id);
+      const before = old.pos;
+      old.pos = entry.pos;
+      const itemsChanged = JSON.stringify(before.devices) !== JSON.stringify(old.pos.devices) || before.merchant !== old.pos.merchant;
+      const deliveryChanged = itemsChanged || ['address', 'contact', 'phone'].some(field => before[field] !== old.pos[field]);
+      if (deliveryChanged) old.orders = {};
+      if (itemsChanged && (state.invoices.some(inv => inv.links.some(link => link.caseId === old.id)) || old.sale.lines?.length)) {
+        old.review = true;
+        const slots = new Set(old.pos.devices.filter(d => before.devices.some(o => o.slot === d.slot &&
+          o.item === d.item && o.qty === d.qty)).map(d => d.slot));
+        old.sale.lines = (old.sale.lines || []).filter(l => slots.has(l.slot));
+        for (const inv of state.invoices) for (const link of inv.links) {
+          if (link.caseId !== old.id) continue;
+          link.slots = link.slots.filter(slot => slots.has(slot));
+          link.confirmed = false;
+        }
+      }
+    });
+  }
+  function amount(value) {
+    const valueText = clean(value).replace(/[,\s]/g, '');
+    if (!valueText) return null;
+    if (!/^\d+(\.\d{1,2})?$/.test(valueText) || !Number.isSafeInteger(Math.round(Number(valueText) * 100))) {
+      throw Error('金額請填寫非負數，最多兩位小數。');
+    }
+    return Number(valueText);
+  }
+  const cents = value => Math.round(value * 100);
+  function date(value, required = false) {
+    const s = clean(value);
+    if (!s && !required) return '';
+    const match = excelDateToText(s).match(/^(\d{3,4})[.\/-](\d{1,2})[.\/-](\d{1,2})(?:[ T].*)?$/);
+    if (!match) throw Error('日期請使用 YYYY-MM-DD。');
+    let [, y, m, d] = match.map(Number);
+    if (y < 1000) y += 1911;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() + 1 !== m || dt.getUTCDate() !== d) throw Error('日期無效。');
+    return [y, String(m).padStart(2, '0'), String(d).padStart(2, '0')].join('-');
+  }
+  const invoiceKey = (vendor, no) => vendor + ':' + no;
+  function invoiceData(input) {
+    const no = clean(input.no).toUpperCase().replace(/[\s-]+/g, '');
+    if (!/^[A-Z]{2}\d{8}$/.test(no)) throw Error('發票號碼請輸入 2 碼英文字母及 8 碼數字。');
+    if (!vendors.includes(input.vendor)) throw Error('請選擇有效的供應商。');
+    const net = amount(input.net), gross = amount(input.gross), tax = amount(input.tax);
+    if (net === null || gross === null) throw Error('請填未稅及含稅金額。');
+    if (gross < net || (tax !== null && cents(gross) !== cents(net) + cents(tax))) throw Error('未稅加稅額應等於含稅金額。');
+    return {vendor: input.vendor, no, date: date(input.date, true), net, gross,
+      tax: tax ?? (cents(gross) - cents(net)) / 100, source: clean(input.source)};
+  }
+  function attachInvoice(state, order, input, replace = false) {
+    const values = invoiceData(input);
+    if (!hasVendor(order, values.vendor)) throw Error('此案件沒有此供應商的設備。');
+    const k = invoiceKey(values.vendor, values.no);
+    let inv = state.invoices.find(i => i.key === k);
+    if (inv && !['date', 'net', 'gross', 'tax'].every(field => inv[field] === values[field])) {
+      if (!replace) throw Error(`同一發票已存在（${inv.date}、未稅 ${inv.net}、含稅 ${inv.gross}）。確認新值後，勾選「更新同號發票資料」再儲存。`);
+      Object.assign(inv, values);
+      for (const link of inv.links) link.confirmed = false;
+    }
+    if (!inv) {
+      inv = {...values, key: k, links: []};
+      state.invoices.push(inv);
+    }
+    if (!inv.links.some(l => l.caseId === order.id)) {
+      if (inv.links.length) inv.everShared = true;
+      inv.links.push({caseId: order.id, slots: [], net: null, gross: null, pr: '', requestDate: ''});
+    }
+    return inv;
+  }
+  function invoiceLinks(state, order, vendor) {
+    return state.invoices.filter(i => i.vendor === vendor && i.links.some(l => l.caseId === order.id))
+      .map(inv => ({inv, link: inv.links.find(l => l.caseId === order.id)}));
+  }
+  function allocation(inv, link) {
+    if (inv.links.length === 1 && !inv.everShared) return {net: inv.net, gross: inv.gross};
+    if (inv.links.some(l => l.net === null || l.gross === null || l.gross < l.net)) return null;
+    for (const field of ['net', 'gross']) {
+      if (inv.links.reduce((sum, l) => sum + cents(l[field]), 0) !== cents(inv[field])) return null;
+    }
+    return {net: link.net, gross: link.gross};
+  }
+  function linkSlots(order, entries, link, vendor) {
+    const valid = order.pos.devices.filter(d => d.qty > 0 && vendorForItem(d.item) === vendor).map(d => d.slot);
+    if (entries.length === 1 && !link.slots.length) return valid;
+    return link.slots.filter(slot => valid.includes(slot));
+  }
+  function billStatus(order, inv, link, entries) {
+    if (order.review || order.pos.issues.length || !desc(order, inv.vendor)) return '待核對設備';
+    if (!allocation(inv, link)) return '待確認跨案金額';
+    const slots = linkSlots(order, entries, link, inv.vendor);
+    if (!slots.length) return '待選擇發票對應設備';
+    const allSlots = entries.flatMap(e => linkSlots(order, entries, e.link, inv.vendor));
+    if (new Set(allSlots).size !== allSlots.length) return '待確認發票對應設備重疊';
+    if (link.confirmed && link.pr && link.requestDate) return '已回填請款';
+    if (!link.confirmed) return '待核對發票';
+    return '可填請款';
+  }
+  const isReady = status => ['已回填請款', '可填請款'].includes(status);
+  function descriptionFor(order, vendor, slots) {
+    return desc({...order, pos: {...order.pos, devices: order.pos.devices.filter(d => slots.includes(d.slot))}}, vendor);
+  }
+  function billWorkbook(state, orders, readyOnly = false) {
+    const details = [], invoices = [];
+    const emitted = new Set();
+    for (const order of orders.filter(c => hasVendor(c, '拍檔'))) {
+      const p = order.pos;
+      const common = [p.row, p.shopId, p.quote, p.merchant, '拍檔'];
+      const entries = invoiceLinks(state, order, '拍檔');
+      if (!entries.length && !readyOnly) details.push([...common, desc(order, '拍檔'), '', '', null, null,
+        order.pos.issues.length ? '待核對設備' : '待補拍檔發票', '', '', '', order.pos.issues.join('；')]);
+      for (const {inv, link} of entries) {
+        const status = billStatus(order, inv, link, entries);
+        if (readyOnly && !isReady(status)) continue;
+        const split = allocation(inv, link);
+        details.push([...common, descriptionFor(order, '拍檔', linkSlots(order, entries, link, '拍檔')), inv.no, inv.date,
+          split?.net ?? null, split?.gross ?? null, status, link.pr, link.requestDate, inv.source,
+          order.pos.issues.join('；')]);
+        if (!emitted.has(inv.key)) {
+          emitted.add(inv.key);
+          invoices.push([inv.no, inv.date, inv.net, inv.tax, inv.gross, inv.links.length, inv.source]);
+        }
+      }
+    }
+    if (!details.length) throw Error(readyOnly ? '勾選的案件沒有已核對且可請款的拍檔資料。' : '勾選的案件沒有拍檔設備。');
+    const book = XLSX.utils.book_new();
+    addSheet(book, '拍檔請款彙整', billHeaders, details);
+    addSheet(book, '拍檔發票明細', ['發票號碼', '發票日期', '整張發票未稅', '整張發票稅額', '整張發票含稅', '關聯案件數', '憑證來源'], invoices);
+    return book;
+  }
+  function addSheet(book, name, headers, rows) {
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows], {cellDates: false});
+    ws['!cols'] = headers.map(h => ({wch: h === '請款描述' ? 64 : h.length > 6 ? 22 : 16}));
+    XLSX.utils.book_append_sheet(book, ws, name);
+    return ws;
+  }
+  function huamaoWorkbook(state, orders, payDate) {
+    const rows = [], issues = [];
+    for (const order of orders.filter(c => hasVendor(c, '華茂'))) {
+      const p = order.pos, meta = order.bills['華茂'] || {};
+      const entries = invoiceLinks(state, order, '華茂');
+      if (p.issues.length || order.review || !desc(order, '華茂')) {
+        issues.push([p.quote, p.merchant, p.issues.join('；') || '請核對設備或公司名稱']);
+        continue;
+      }
+      if (!entries.length) {
+        const hw = p.devices.filter(d => vendorForItem(d.item) === '華茂' && d.qty > 0);
+        const estimated = hw.every(d => Object.hasOwn(COST, d.item)) ? hw.reduce((sum, d) => sum + d.qty * COST[d.item][0], 0) : null;
+        rows.push([meta.payDate || payDate, '', '', '', desc(order, '華茂'), estimated, null, meta.paid ?? null,
+          meta.statement || '', estimated === null ? '待補發票與採購金額' : '暫估金額，待補發票核對']);
+        continue;
+      }
+      for (const {inv, link} of entries) {
+        const status = billStatus(order, inv, link, entries);
+        const slots = linkSlots(order, entries, link, '華茂');
+        const split = allocation(inv, link);
+        rows.push([meta.payDate || payDate, link.pr, inv.no, inv.date, descriptionFor(order, '華茂', slots),
+          isReady(status) ? split.gross : null, link.claimed ?? null, link.paid ?? null, meta.statement || '',
+          isReady(status) ? (meta.notes || '') : status]);
+      }
+    }
+    if (!rows.length && !issues.length) throw Error('勾選的案件沒有華茂設備。');
+    const book = XLSX.utils.book_new();
+    addSheet(book, '華茂款項匯入資訊', hmHeaders, rows);
+    if (issues.length) addSheet(book, '待確認', ['報價單編號', '公司名稱', '待確認事項'], issues);
+    return book;
+  }
+  function orderMessages(order) {
+    const messages = [];
+    if (order.pos.issues.length || !order.pos.merchant) return messages;
+    for (const vendor of vendors) {
+      const agg = Object.create(null);
+      for (const d of order.pos.devices) if (d.qty > 0 && vendorForItem(d.item) === vendor) agg[d.item] = (agg[d.item] || 0) + d.qty;
+      if (Object.keys(agg).length) messages.push(buildVendorMessageFromGroup({info: order.pos, vendor, agg, rows: [order.pos.row]}));
+    }
+    return messages;
+  }
+  function sapTemplate(wb, source) {
+    if (!wb.Sheets[sapName]) throw Error('找不到「' + sapName + '」分頁。');
+    const ws = wb.Sheets[sapName];
+    if(!ws['!ref'])throw Error('「'+sapName+'」工作表是空的。');
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    if (range.e.r > 20000) throw Error('SAP 工作表超過 20,000 列。');
+    const values = XLSX.utils.sheet_to_json(ws, {header: 1, raw: true, defval: null,
+      range: {s: {r: 0, c: 0}, e: {r: range.e.r, c: sapHeaders.length - 1}}});
+    if (!sapHeaders.every((h, i) => !h || norm(values[0][i]) === norm(h))) throw Error('SAP 樣板欄位與指定格式不同。');
+    const last = values.slice(1).filter(r => populated(r[2]));
+    if(!last.length)throw Error('VK 工作表有表頭，但沒有報價單編號明細。');
+    return {source, rows: last};
+  }
+  function quotationRows(wb, source) {
+    const preferred = wb.SheetNames.find(n => n === '內部系統報價單');
+    const name = preferred || wb.SheetNames[0];
+    const data = sheetRows(wb, name);
+    const headers=new Set(data.headers.map(norm));
+    if(!hasHeader(headers,['報價單號','報價單編號'])||
+       !hasHeader(headers,['設備','品項','購買項目&數量(台)','發票號碼','順立開出發票號碼','銷售價(含稅)','銷售單價(含稅)','含稅單價','試算未稅','銷售單價(未稅)','未稅單價'])||
+       hasHeader(headers,['設備1','SAP 銷售(全)'])){
+      throw Error('內部系統報價單.xlsx 需包含報價單號，以及品項、銷售單價或發票號碼欄。');
+    }
+    return data.rows.map(row => ({
+      quote: clean(findVal(row, ['報價單號', '報價單編號'])),
+      shopId: clean(findVal(row, ['SHOP ID', 'EcShopID'])),
+      no: clean(findVal(row, ['發票號碼', '順立開出發票號碼'])),
+      date: excelDateToText(findVal(row, ['發票開立時間', '發票日期'])),
+      item: clean(findVal(row, ['設備', '品項', '購買項目&數量(台)'])),
+      quantity: clean(findVal(row, ['數量'])),
+      gross: clean(findVal(row, ['銷售價(含稅)', '銷售單價(含稅)', '含稅單價'])),
+      net: clean(findVal(row, ['試算未稅', '銷售單價(未稅)', '未稅單價'])),
+      invoiceStatus: clean(findVal(row, ['發票狀態'])), source,
+    })).filter(r => r.quote);
+  }
+  function salesCandidates(state, order) {
+    const shop = norm(order.pos.shopId);
+    const matches = state.quotes.filter(r => quoteKey(r.quote) === quoteKey(order.pos.quote) &&
+      (!shop || !r.shopId || norm(r.shopId) === shop) && !/作廢|取消/.test(r.invoiceStatus));
+    const pairs = new Map();
+    for (const r of matches) if (r.no && r.date) {
+      try { pairs.set(r.no + ':' + date(r.date), {no: r.no, date: date(r.date)}); } catch { /* invalid dates remain for manual verification */ }
+    }
+    return {matches, sales: [...pairs.values()]};
+  }
+  function compatibleSalePrices(matches, d) {
+    const matchesItem = matches.filter(r => standardItem(r.item) === d.item && (!r.quantity || Number(r.quantity) === d.qty));
+    const amounts = new Map();
+    for (const r of matchesItem) {
+      try {
+        const price = [amount(r.gross), amount(r.net)];
+        if (price.some(populated)) amounts.set(JSON.stringify(price), price);
+      } catch { /* unrecognized amount needs confirmation */ }
+    }
+    return amounts.size === 1 ? [...amounts.values()][0] : [];
+  }
+  function quotationDocument(state, order, fields) {
+    const p = order.pos;
+    const buyer = clean(fields.buyer), issuer = clean(fields.issuer), no = clean(fields.no);
+    if (!buyer || !issuer || !no) throw Error('請填寫客戶名稱、報價公司及報價單號。');
+    if (no.length > 80) throw Error('報價單號最多 80 個字元。');
+    if (p.issues.length || order.review) throw Error('請先核對設備及數量。');
+    const devices = p.devices.filter(d => d.qty > 0);
+    if (!devices.length) throw Error('此案件沒有可報價的品項。');
+    const {matches} = salesCandidates(state, order);
+    const key = quoteKey(p.quote), shop = norm(p.shopId);
+    const historical = key ? (state.sap?.rows || []).filter(r => quoteKey(r[2]) === key &&
+      (!shop || !r[1] || norm(r[1]) === shop)) : [];
+    const lines = devices.map(d => {
+      const manual = order.sale.lines?.find(l => l.slot === d.slot);
+      const unique = devices.filter(other => other.item === d.item && other.qty === d.qty).length === 1;
+      const old = historical.filter(row => standardItem(row[13]) === d.item && Number(row[15]) === d.qty);
+      const [rawGross, rawNet] = manual ? [manual.gross, manual.net] :
+        unique ? (old.length === 1 && [old[0][14],old[0][16]].some(populated) ?
+          [old[0][14],old[0][16]] : compatibleSalePrices(matches,d)) : [];
+      const net = amount(rawNet), gross = amount(rawGross);
+      if (net === null && gross === null) throw Error('「' + d.raw + '」缺少確定的銷售單價，請先儲存逐項銷售單價。');
+      if (net !== null && gross !== null && gross < net) throw Error('「' + d.raw + '」含稅單價低於未稅單價。');
+      return {name:d.raw, qty:d.qty, net, gross, netTotal:net === null ? null : cents(net)*d.qty,
+        grossTotal:gross === null ? null : cents(gross)*d.qty};
+    });
+    const sum = name => lines.every(l => l[name] !== null) ? lines.reduce((total,l) => total+l[name],0) : null;
+    const net = sum('netTotal'), gross = sum('grossTotal');
+    if (net === null && gross === null) throw Error('各品項至少需有同一稅別的單價（全部未稅或全部含稅），才能計算合計。');
+    if (![net,gross,...lines.flatMap(l => [l.netTotal,l.grossTotal])]
+        .every(n => n === null || Number.isSafeInteger(n))) throw Error('報價總額超出可處理的金額範圍。');
+    const issued = date(fields.date,true), expires = date(fields.expires);
+    if (expires && expires < issued) throw Error('報價有效期限不可早於報價日期。');
+    return {issuer,buyer,no,issued,expires,buyerTaxId:clean(fields.buyerTaxId),
+      contact:clean(fields.contact), phone:clean(fields.phone), address:clean(fields.address),
+      email:clean(fields.email), issuerContact:clean(fields.issuerContact), shopId:p.shopId,
+      notes:String(fields.notes || '').trim(), lines, net, gross, tax:net === null || gross === null ? null : gross-net};
+  }
+  function formatSapDates(sheet, length) {
+    for (const [column, includeTime] of [[6,false],[9,false],[23,false],[25,false],[26,true]]) {
+      for (let row = 1; row <= length; row++) {
+        const cell = sheet[XLSX.utils.encode_cell({r:row,c:column})];
+        if (!cell) continue;
+        if (cell.t === 'n' && cell.v >= 30000 && cell.v < 80000) {
+          cell.z = includeTime ? 'yyyy/mm/dd hh:mm:ss' : 'yyyy/mm/dd';
+        } else if (cell.t === 's' && /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/.test(cell.v)) {
+          try {
+            const [y,m,d] = date(cell.v).split('-').map(Number);
+            cell.t = 'n'; cell.v = (Date.UTC(y,m-1,d)-Date.UTC(1899,11,30)) / 86400000;
+            cell.z = 'yyyy/mm/dd';
+            delete cell.w;
+          } catch { /* keep original unrecognized dates */ }
+        }
+      }
+    }
+  }
+  function sapWorkbook(state, orders) {
+    const rows = [], notes = [], historical = state.sap?.rows || [];
+    const historyIndex = new Map(), caseIndex = new Map();
+    for (const row of historical) {
+      const k = quoteKey(row[2]);
+      if (!historyIndex.has(k)) historyIndex.set(k, []);
+      historyIndex.get(k).push(row);
+    }
+    for (const c of state.cases) {
+      const k = quoteKey(c.pos.quote);
+      if (!caseIndex.has(k)) caseIndex.set(k, []);
+      caseIndex.get(k).push(c);
+    }
+    const blockedHistory = new Set();
+    for (const order of orders) {
+      const p = order.pos, quote = quoteKey(p.quote), shop = norm(p.shopId);
+      const report = s => notes.push([p.row, p.quote, p.merchant, s]);
+      if (!quote) { report('缺報價單編號，請確認後再 Key-in'); continue; }
+      const peers = caseIndex.get(quote).filter(c => !shop || !c.pos.shopId || norm(c.pos.shopId) === shop);
+      const old = (historyIndex.get(quote) || []).filter(r => !shop || !r[1] || norm(r[1]) === shop);
+      if (p.issues.length || order.review || peers.length > 1) {
+        report(peers.length > 1 ? '同報價單有多筆可能的 POS 案件，ERP 歷史保留原列，新資料待確認分批歸屬' :
+          '設備待核對，ERP 歷史保留原列：' + p.issues.join('；'));
+        for (const r of old) if (!blockedHistory.has(r)) { rows.push(r.slice()); blockedHistory.add(r); }
+        continue;
+      }
+      const {matches, sales} = salesCandidates(state, order);
+      const sale = order.sale.no ? order.sale : sales.length === 1 ? sales[0] : {};
+      if (sales.length > 1 && !order.sale.no) report('有多張銷售發票候選，請確認後填入');
+      if (!state.sap) report('未匯入歷史 VK 工作表，本次提供固定欄位空白底稿');
+      const used = new Set(), totaled = new Set();
+      const devices = p.devices.filter(d => d.qty > 0);
+      if (!devices.length) report('缺少有效的設備明細');
+      const byVendor = Object.fromEntries(vendors.map(v => [v, invoiceLinks(state, order, v)]));
+      const count = d => devices.filter(other => other.item === d.item && other.qty === d.qty).length;
+      for (const d of devices) {
+        const vendor = vendorForItem(d.item);
+        const sameItem = old.filter(r => standardItem(r[13]) === d.item);
+        const oldMatches = sameItem.filter(r => Number(r[15]) === d.qty);
+        if (!oldMatches.length && sameItem.length) {
+          report('設備「' + d.item + '」的數量與 VK 原表不一致，保留原列並待確認');
+          continue;
+        }
+        if (oldMatches.length > 1 || (oldMatches.length && count(d) > 1)) {
+          report('設備「' + d.item + '」對應多筆明細，保留 VK 原列並待確認');
+          continue;
+        }
+        const oldRow = oldMatches[0];
+        if (oldRow) used.add(oldRow);
+        const row = oldRow?.slice() || Array(sapHeaders.length).fill(null);
+        const fill = (i, value) => {
+          if (!populated(row[i]) && populated(value)) row[i] = value;
+        };
+        fill(1, p.shopId); fill(2, p.quote); fill(7, p.merchant); fill(13, d.item); fill(15, d.qty);
+        if (vendor === '華茂') fill(6, p.hmDate);
+        if (!vendor) fill(23, p.peakDate);
+        if (vendor === '拍檔') {
+          fill(20, state.partnerCode);
+          if (!row[20]) report('拍檔供應商代碼待確認');
+        }
+        if (vendor === '華茂') fill(20, 'VAA0000037');
+        fill(21, vendor === '華茂' ? '華茂資訊' : vendor);
+        if (sale.no && populated(row[8]) && clean(row[8]) !== clean(sale.no)) report('既有銷售發票與補件不同，已保留原值');
+        fill(8, sale.no); fill(9, sale.date);
+        const prices = order.sale.lines?.find(l => l.slot === d.slot);
+        const [gross, net] = prices ? [prices.gross, prices.net] : count(d) === 1 ? compatibleSalePrices(matches, d) : [];
+        fill(14, gross); fill(16, net);
+        const entries = byVendor[vendor] || [];
+        const entry = entries.find(e => isReady(billStatus(order, e.inv, e.link, entries)) &&
+          linkSlots(order, entries, e.link, vendor).includes(d.slot));
+        if (entry) {
+          const {inv, link} = entry, split = allocation(inv, link);
+          const slots = linkSlots(order, entries, link, vendor);
+          const historicalTotals = historical.filter(r => clean(r[24]) === inv.no && populated(r[17]));
+          const existingAmount = historicalTotals.some(r => (clean(r[21]) === '' || clean(r[21]).includes(vendor)));
+          const mismatched = populated(row[24]) && clean(row[24]) !== inv.no;
+          if (mismatched) report('既有採購憑證與補件不同，已保留原值');
+          else {
+            const consistentPr = !populated(row[22]) || !link.pr || clean(row[22]) === clean(link.pr);
+            if (!consistentPr) report('既有請款單號與回填不同，已保留原值');
+            fill(24, inv.no); fill(25, inv.date);
+            if (consistentPr) { fill(22, link.pr); fill(26, link.requestDate); }
+            if (!totaled.has(inv.key) && !existingAmount && consistentPr && !populated(row[17])) {
+              fill(17, split.gross);
+              totaled.add(inv.key);
+            }
+            if (slots.length === 1 && cents(split.gross) % d.qty === 0 && cents(split.net) % d.qty === 0) {
+              fill(18, cents(split.gross) / d.qty / 100); fill(19, cents(split.net) / d.qty / 100);
+            } else if (!populated(row[18]) || !populated(row[19])) report('多設備憑證的個別採購價待分攤，已保留發票總額');
+          }
+        }
+        fill(28, p.notes);
+        if (!populated(row[14]) || !populated(row[16])) report('設備「' + d.item + '」的銷售單價待確認');
+        rows.push(row);
+      }
+      for (const r of old) if (!used.has(r)) {
+        report('VK 原表有未對應的設備列，已保留 ERP 歷史');
+        rows.push(r.slice());
+      }
+    }
+    if (!rows.length && !notes.length) throw Error('勾選的案件沒有可輸出的設備資料。');
+    const book = XLSX.utils.book_new();
+    formatSapDates(addSheet(book, sapName, sapHeaders, rows), rows.length);
+    const unique = [...new Map(notes.map(n => [JSON.stringify(n), n])).values()];
+    if (unique.length) addSheet(book, '待確認', ['來源列', '報價單編號', '公司名稱', '待確認事項'], unique);
+    return book;
+  }
+  function requestRows(wb, vendor, source) {
+    const data = chooseInvoiceSheet(wb,true);
+    return data.rows.map(r => ({
+      vendor, source,
+      quote: clean(findVal(r, ['報價單編號', '報價單號'])),
+      no: clean(findVal(r, ['發票號碼', '憑證文件號碼', '請款憑證'])),
+      date: clean(findVal(r, ['發票日期', '憑證日期'])),
+      net: clean(findVal(r, ['金額（未稅）', '金額(未稅)', '未稅金額'])),
+      gross: clean(findVal(r, ['金額（含稅）', '金額(含稅)', '含稅金額', '金額'])),
+      tax: clean(findVal(r, ['稅額', '營業稅'])),
+      pr: requestNo(findVal(r, ['請款單號', 'vk請款單', '設備請款單號'])),
+      requestDate: clean(findVal(r, ['請款日期', '建檔日期'])),
+      memo: clean(findVal(r, ['請款描述', '摘要說明', '說明'])),
+      taxId: clean(findVal(r, ['供應商統一編號'])),
+    })).filter(r => r.no || r.pr);
+  }
+  function restore(raw) {
+    const state = typeof raw==='string'?JSON.parse(raw):raw;
+    if (!state || state.version !== 1 || !Array.isArray(state.cases) || !Array.isArray(state.invoices) ||
+        !Array.isArray(state.quotes) || state.cases.length > 20000 || state.invoices.length > 20000 ||
+        state.quotes.length > 40000 || (state.sap && (!Array.isArray(state.sap.rows) || state.sap.rows.length > 20000))) {
+      throw Error('工作檔格式不符或資料量過大。');
+    }
+    const ids = new Set(), keys = new Set();
+    for (const c of state.cases) {
+      if (!c?.id || typeof c.id !== 'string' || ids.has(c.id) || !Array.isArray(c.pos?.devices) ||
+          !Number.isInteger(c.pos.row) || c.pos.row < 1 ||
+          !c.pos.devices.every(d => d && typeof d.item === 'string' && typeof d.raw === 'string' &&
+            Number.isInteger(d.slot) && d.slot > 0 && d.slot <= 5 && (d.qty === null || Number.isSafeInteger(d.qty) && d.qty > 0)) ||
+          !Array.isArray(c.pos.issues) || !Array.isArray(c.docs) || !c.orders || !c.sale || !c.bills) throw Error('工作檔的案件資料不完整。');
+      ids.add(c.id);
+    }
+    for (const inv of state.invoices) {
+      const verified = invoiceData(inv);
+      if (inv.key !== invoiceKey(verified.vendor, verified.no) || keys.has(inv.key) || !Array.isArray(inv.links) ||
+          !inv.links.length || inv.links.some(l => !ids.has(l.caseId) || !Array.isArray(l.slots) ||
+            (l.net !== null && typeof l.net !== 'number') || (l.gross !== null && typeof l.gross !== 'number'))) throw Error('工作檔的發票連結不完整。');
+      if (new Set(inv.links.map(l => l.caseId)).size !== inv.links.length ||
+          inv.links.some(l => l.slots.some(slot => !Number.isInteger(slot) || slot < 1 || slot > 5))) {
+        throw Error('工作檔的發票關聯重複或設備欄位無效。');
+      }
+      keys.add(inv.key);
+    }
+    return state;
+  }
+  return {vendors, sapName, sapHeaders, hmHeaders, create, desc, hasVendor, quoteKey, date, amount, posRows, previewPos,
+    commitPos, attachInvoice, invoiceLinks, invoiceData, allocation, linkSlots, billStatus, descriptionFor,
+    isReady, orderMessages, billWorkbook, huamaoWorkbook, sapTemplate, quotationRows, salesCandidates,
+    sapWorkbook, requestRows, restore, quotationDocument};
+})();
