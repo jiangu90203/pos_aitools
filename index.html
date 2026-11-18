@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>設備請款助手 Pro v15.1｜Usahana UI</title>
+  <title>設備請款助手 Pro v15.2｜Usahana UI</title>
   <script src="vendor/xlsx.full.min.js"></script>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
@@ -153,6 +153,7 @@
     <div class="hello"><span style="font-size:28px">🌸</span><div><b>您好！</b><br><span class="small">歡迎使用設備請款助手</span></div></div>
     <nav class="nav">
       <a class="active" href="#caseWorkspace">📋 案件工作區</a>
+      <a href="#caseSapDatabase">SAP資料庫</a>
       <a href="#hm">華茂款項匯入</a>
       <a href="#invoice">請款單轉換</a>
       <a href="#vendorMsg">廠商下單訊息</a>
@@ -163,7 +164,7 @@
   </aside>
   <main class="main" id="home">
     <div class="topbar">
-      <div class="titleWrap"><h1>設備請款助手 Pro <span class="version">v15.1</span></h1><p>設備下單、供應商請款與 SAP 準備</p></div>
+      <div class="titleWrap"><h1>設備請款助手 Pro <span class="version">v15.2</span></h1><p>設備下單、供應商請款與 SAP 準備</p></div>
       <nav class="topNav"><a href="#home">🏠 首頁</a><a href="#logPanel">🕘 處理紀錄</a><a href="#ar">💰 請款查詢</a><a href="#rules">⚙️ 轉換規則</a><a href="docs/USER_GUIDE.md" target="_blank" rel="noopener">❔ 使用說明</a></nav>
     </div>
     <section id="caseWorkspace" class="panel case-workspace" aria-labelledby="caseWorkspaceTitle">
@@ -180,10 +181,10 @@
           <span class="small">匯入或補匯入「下單設備資料」</span></label>
         <label class="drop import-field"><strong>內部系統報價單.xlsx</strong>
           <input id="caseQuote" type="file" accept=".xlsx,.xls">
-          <span class="small">補入報價明細與銷售發票候選資料</span></label>
-        <label class="drop import-field"><strong>202601-03報價單匯出 POS TEAM用.xlsx</strong>
+          <span class="small">匯入既有單價與銷售發票候選資料。產出報價 PDF 請開啟案件詳情。</span></label>
+        <label class="drop import-field" id="caseSapDatabase"><strong>SAP資料庫</strong>
           <input id="caseSap" type="file" accept=".xlsx,.xls" aria-describedby="caseSapSource">
-          <span id="caseSapSource" class="small">讀取指定的 VK SAP 工作表</span></label>
+          <span id="caseSapSource" class="small">Excel 檔，讀取指定的 VK SAP 工作表</span></label>
         <div class="drop import-field">
           <label for="caseRequests"><strong>請款單匯出.xlsx</strong></label>
           <input id="caseRequests" type="file" accept=".xlsx,.xls">
@@ -230,11 +231,23 @@
           <button type="button" class="case-btn primary" data-case-action="partner">拍檔請款彙整 Excel</button>
           <button type="button" class="case-btn" data-case-action="partner-ready">僅匯出已核對的拍檔請款</button>
           <button type="button" class="case-btn" data-case-action="sap">SAP Key-in 準備表</button>
-          <button type="button" class="case-btn" data-case-action="orders">廠商下單文字 Excel</button>
           <button type="button" class="case-btn" data-case-action="hm">華茂對帳 Excel</button>
           <label class="case-date">批次預計撥款日<input id="casePayDate" type="date"></label>
         </div>
       </div>
+      <section class="case-exports" aria-labelledby="caseOrdersTitle">
+        <div class="case-detail-top">
+          <h3 id="caseOrdersTitle">勾選案件的廠商下單文字</h3>
+          <label class="case-order-format">訊息格式<select id="caseOrderChannel">
+            <option value="lineMessage">LINE 文字</option>
+            <option value="subject">Email 主旨</option>
+            <option value="emailBody">Email 內文</option>
+            <option value="all">全部內容</option>
+          </select></label>
+        </div>
+        <p id="caseOrderFeedback" class="case-meta" role="status"></p>
+        <div id="caseOrderPreview"></div>
+      </section>
       <section id="caseDetail" class="case-detail" aria-label="案件詳情" hidden></section>
     </section>
     <div id="legacyWorkflows" class="legacy-workflows">
@@ -296,8 +309,8 @@ BL83558882
     </section>
     </div>
     <section class="panel" id="logPanel"><div class="panelTitle"><span class="flowerDot">🕘</span>處理紀錄 <button type="button" id="logToggle" class="miniBtn" aria-expanded="false">顯示全部</button></div><div class="log" id="log">等待上傳檔案...</div></section>
-    <section class="panel rules" id="rules"><div class="panelTitle"><span class="flowerDot">⚙️</span>轉換規則</div><div><span class="pill">T823/T82 → EPSON發票機</span><span class="pill">M303發票機(WIFI) → WIFI發票機(M303)</span><span class="pill">華茂匯入可指定起訖列</span><span class="pill">銷貨單 PDF 自動抓發票</span><span class="pill">請款單轉換沿用 v8</span><span class="pill">應收帳款 PDF/Excel 對帳</span><span class="pill">華茂／拍檔直出下單訊息</span><span class="pill">指定區間生成廠商下單訊息</span></div><div class="small">POS 只讀取「下單設備資料」分頁；商品數量優先依設備欄名配對；沒有具名欄位時，華茂匯入／廠商下單依 K/L、M/N、O/P、Q/R、S/T 備援讀取。保留 Excel 上傳流程、既有價格及廠商分流；v15.1 強化數量驗證、重複單號檢查及資料安全。廠商下單訊息可指定開始/結束列，並依商家與收件資訊自動分組；Email 內文不再附簽名檔。</div></section>
-    <div class="footer">© 2026 Equipment Billing Assistant Pro · Usahana UI v15.1 🌸</div>
+    <section class="panel rules" id="rules"><div class="panelTitle"><span class="flowerDot">⚙️</span>轉換規則</div><div><span class="pill">T823/T82 → EPSON發票機</span><span class="pill">M303發票機(WIFI) → WIFI發票機(M303)</span><span class="pill">華茂匯入可指定起訖列</span><span class="pill">銷貨單 PDF 自動抓發票</span><span class="pill">請款單轉換沿用 v8</span><span class="pill">應收帳款 PDF/Excel 對帳</span><span class="pill">華茂／拍檔直出下單訊息</span><span class="pill">指定區間生成廠商下單訊息</span></div><div class="small">POS 只讀取「下單設備資料」分頁；商品數量優先依設備欄名配對；沒有具名欄位時，華茂匯入／廠商下單依 K/L、M/N、O/P、Q/R、S/T 備援讀取。保留 Excel 上傳流程、既有價格及廠商分流；已強化數量驗證、重複單號檢查及資料安全。廠商下單訊息可指定開始/結束列，並依商家與收件資訊自動分組；Email 內文不再附簽名檔。</div></section>
+    <div class="footer">© 2026 Equipment Billing Assistant Pro · Usahana UI v15.2 🌸</div>
   </main>
 </div>
 
@@ -306,6 +319,7 @@ BL83558882
 <script src="app.js"></script>
 <script src="case-data.js"></script>
 <script src="import-io.js"></script>
+<script src="quote-pdf.js"></script>
 <script src="case-ui.js"></script>
 </body>
 </html>
