@@ -122,3 +122,19 @@
   .table-sizing input[type=range],.case-workspace .table-sizing input[type=range] { width:min(11rem,36vw); min-height:40px; }
   .case-table th,.case-table td { padding:.45rem .5rem; }
 }
+
+.case-doc-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem; }
+.case-doc-card { padding:.65rem; min-width:0; border:1px solid var(--case-border); border-radius:10px; overflow-wrap:anywhere; }
+.case-doc-file,.case-doc-saved { display:grid; gap:.3rem; min-width:0; }
+.case-doc-file>span { font-weight:600; }
+.case-doc-file input { min-width:0; width:100%; }
+.case-doc-saved { margin-top:.65rem; padding-top:.55rem; border-top:1px solid var(--case-border); }
+#caseVendorPreview:not(:empty) { margin-top:.7rem; }
+.case-doc-values { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.4rem; margin:.55rem 0; }
+.case-doc-values>div { background:#faf5fb; border-radius:6px; padding:.35rem .5rem; }
+.case-doc-values dt { font-size:.85rem; color:var(--case-muted); }
+.case-doc-values dd { margin:0; }
+@media(max-width:640px) {
+  .case-doc-grid { grid-template-columns:minmax(0,1fr); }
+  .case-doc-values { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}

@@ -1217,7 +1217,7 @@ async function readPdfRecords(file,extract,accept=()=>true){
     const rows=[];
     for(let p=1;p<=pdf.numPages;p++){
       const page=await pdf.getPage(p);
-      try{const content=await page.getTextContent();const found=extract(content.items.map(it=>it.str).join(' '),file.name,p);rows.push(...(Array.isArray(found)?found:[found]).filter(accept));}
+      try{const content=await page.getTextContent();const found=extract(content.items.map(it=>it.str).join(' '),file.name,p,content.items);rows.push(...(Array.isArray(found)?found:[found]).filter(accept));}
       finally{page.cleanup();}
     }
     return rows;

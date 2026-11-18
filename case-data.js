@@ -228,6 +228,12 @@ const Cases = (() => {
     const book = XLSX.utils.book_new();
     addSheet(book, '拍檔請款彙整', billHeaders, details);
     addSheet(book, '拍檔發票明細', ['發票號碼', '發票日期', '整張發票未稅', '整張發票稅額', '整張發票含稅', '關聯案件數', '憑證來源'], invoices);
+    appendVendorSheets(book,orders,'拍檔',readyOnly?(order,doc)=>{
+      const entries=invoiceLinks(state,order,'拍檔');
+      const ready=entries.filter(({inv,link})=>isReady(billStatus(order,inv,link,entries)));
+      return ready.some(({inv})=>doc.invoiceNo===inv.no ||
+        Boolean(doc.shipNo&&order.docs.some(d=>d.parsed?.shipNo===doc.shipNo&&d.parsed.invoiceNo===inv.no&&d.kind==='發票')));
+    }:undefined);
     return book;
   }
   function addSheet(book, name, headers, rows) {
@@ -235,6 +241,24 @@ const Cases = (() => {
     ws['!cols'] = headers.map(h => ({wch: h === '請款描述' ? 64 : h.length > 6 ? 22 : 16}));
     XLSX.utils.book_append_sheet(book, ws, name);
     return ws;
+  }
+  function appendVendorSheets(book,orders,vendor,include=()=>true) {
+    const header=['案件來源列','SHOP ID','報價單編號','商家名稱','廠商','文件類型','文件單號','來源檔案'];
+    const files=[], items=[];
+    for(const order of orders){
+      for(const d of (typeof VendorDocs==='undefined'?[]:VendorDocs.documents(order))){
+        const doc=d.parsed;
+        if((vendor&&d.vendor!==vendor)||!hasVendor(order,d.vendor)||!include(order,doc))continue;
+        const p=order.pos, base=[p.row,p.shopId,p.quote,p.merchant,d.vendor,d.kind,doc.id,d.name];
+        files.push([...base,doc.shipNo,doc.shipDate,doc.invoiceNo,doc.invoiceDate,doc.orderNo,
+          doc.buyer,doc.recipient,doc.net,doc.tax,doc.gross,doc.warnings.join('；')]);
+        for(const i of doc.items) items.push([...base,i.code,i.name,i.unit,i.quantity,i.unitPrice,i.net,i.gross,i.raw]);
+      }
+    }
+    if(!files.length)return;
+    addSheet(book,'廠商文件',[...header,'銷貨／出貨單號','出貨日期','發票號碼','發票日期','廠商訂單單號',
+      '帳款客戶','收件／轉寄資訊','未稅','稅額','含稅','待核對'],files);
+    addSheet(book,'廠商品項',[...header,'產品編號','品名／規格','單位','數量','單價','未稅','含稅','原始品項文字'],items);
   }
   function huamaoWorkbook(state, orders, payDate) {
     const rows = [], issues = [];
@@ -265,6 +289,7 @@ const Cases = (() => {
     const book = XLSX.utils.book_new();
     addSheet(book, '華茂款項匯入資訊', hmHeaders, rows);
     if (issues.length) addSheet(book, '待確認', ['報價單編號', '公司名稱', '待確認事項'], issues);
+    appendVendorSheets(book,orders,'華茂');
     return book;
   }
   function orderMessages(order) {
@@ -493,6 +518,7 @@ const Cases = (() => {
     formatSapDates(addSheet(book, sapName, sapHeaders, rows), rows.length);
     const unique = [...new Map(notes.map(n => [JSON.stringify(n), n])).values()];
     if (unique.length) addSheet(book, '待確認', ['來源列', '報價單編號', '公司名稱', '待確認事項'], unique);
+    appendVendorSheets(book,orders);
     return book;
   }
   function requestRows(wb, vendor, source) {

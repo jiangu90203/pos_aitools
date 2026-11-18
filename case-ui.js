@@ -8,7 +8,7 @@
   const selected = new Set();
   let state = Cases.create();
   let current = '', staged = null, filterPage = 0, busy = false, dirty = false, stageToken = 0;
-  let posImport = null;
+  let posImport = null, vendorPreview = null;
   const pageSize = 30, previewSize = 20, orderSize = 12;
   let quoteUrl='', orderFrame=0, orderPage=0, orderDirty=true, orderMessages=[];
   let caseIndex = new Map(), indexedCases, billsByCase = new Map(), visibleCases = [], filterFrame = 0;
@@ -219,6 +219,90 @@
         <iframe id="caseQuoteFrame" title="報價單 PDF 預覽"></iframe>
       </div></section>`;
   }
+  function vendorFileControl(vendor,kind,label,replaceKey='',disabled=false) {
+    return `<label class="case-doc-file"><span>${e(label)}</span>
+      <input type="file" accept=".pdf,application/pdf" data-doc-vendor="${e(vendor)}"
+        data-doc-kind="${e(kind)}" data-doc-replace="${e(replaceKey)}" ${disabled?'disabled':''}></label>`;
+  }
+  function vendorSection(c) {
+    const docs=VendorDocs.documents(c);
+    return `<section class="case-section" aria-label="廠商交易文件">
+      <h4><span aria-hidden="true">▤</span> 廠商銷貨單與發票</h4>
+      <p class="case-meta">選取文字型 PDF。核對供應商、案件及內容後再確認關聯。</p>
+      <div class="case-doc-grid">${Cases.vendors.flatMap(vendor=>VendorDocs.kinds.map(kind=>{
+        const canImport=Cases.hasVendor(c,vendor);
+        const entries=docs.filter(d=>d.vendor===vendor&&d.kind===kind);
+        return `<div class="case-doc-card">
+          ${vendorFileControl(vendor,kind,vendor+' '+kind+' PDF','',!canImport)}
+          <div class="case-meta">${canImport?(entries.length?'已保存 '+entries.length+' 份':'尚未匯入'):'此案件沒有此廠商的設備'}</div>
+          ${entries.map(d=>`<div class="case-doc-saved"><strong>${e(d.name)} · PDF</strong>
+            <span class="case-meta">${e(d.parsed.id)} · ${d.parsed.warnings.length?'部分欄位待核對':'已確認文件關聯'}</span>
+            <div class="case-actions">
+            <button type="button" class="case-btn" data-doc-inspect="${e(d.key)}">查看結果</button>
+            <button type="button" class="case-btn" data-doc-remove="${e(d.key)}">移除</button>
+            </div>${vendorFileControl(vendor,kind,'替換這份文件',d.key,!canImport)}</div>`).join('')}
+          </div>`;
+      })).join('')}</div>
+      <div id="caseVendorPreview"></div>
+      </section>`;
+  }
+  function renderVendorPreview() {
+    const node=byId('caseVendorPreview'), c=order(), pending=vendorPreview;
+    if(!node)return;
+    if(!pending||pending.caseId!==c?.id){node.innerHTML='';return;}
+    if(!pending.doc){
+      node.innerHTML=`<div class="case-doc-card"><strong>${e(pending.name)} · ${e(pending.vendor)} ${e(pending.kind)}</strong>
+        <p class="${pending.error?'case-warning':'case-meta'}">${e(pending.error||'正在解析 PDF…')}</p></div>`;return;
+    }
+    const d=pending.doc;
+    let evidence=[], problem='';
+    try{evidence=VendorDocs.association(state,c,d);}
+    catch(err){problem=err.message;}
+    const fields=[['文件單號',d.id],['銷貨／出貨單號',d.shipNo],['銷貨／出貨日期',d.shipDate],
+      ['發票號碼',d.invoiceNo],['發票日期',d.invoiceDate],['廠商訂單單號',d.orderNo],
+      ['帳款客戶',d.buyer],['收件／轉寄資訊',d.recipient],['未稅',d.net],['稅額',d.tax],['含稅',d.gross]];
+    const cell=value=>e(value===null||value===''?'—':String(value));
+    node.innerHTML=`<div class="case-doc-card case-doc-preview">
+      <strong>${e(d.vendor)} ${e(d.kind)} · ${e(d.name)} · PDF</strong>
+      <p class="case-meta">${pending.saved?'已保存':'待確認'} · 案件 ${e(labelFor(c))}</p>
+      <p class="${problem?'case-warning':'case-meta'}">${e(problem || evidence.join('；') || '缺少可直接核對的案件識別。請拿原件核對收件、品項及案件後再確認。')}</p>
+      ${d.warnings.length?`<p class="case-warning">${e(d.warnings.join(' '))}</p>`:''}
+      <dl class="case-doc-values">${fields.map(([label,value])=>`<div><dt>${label}</dt><dd>${cell(value)}</dd></div>`).join('')}</dl>
+      <div id="caseVendorItems"></div>
+      ${!pending.saved?`<form id="caseVendorConfirm">
+        <label class="case-tick"><input type="checkbox" name="confirmed" required>已核對文件屬於此案件及供應商</label>
+        ${d.invoiceReady?`<label class="case-tick"><input type="checkbox" name="linkInvoice" checked>將發票欄位帶入請款前整理，設備與金額仍需核對</label>`:''}
+        <div class="case-actions"><button type="submit" class="case-btn primary" ${problem?'disabled':''}>${pending.replaceKey?'確認替換':'確認關聯'}</button>
+          <button type="button" class="case-btn" data-case-action="cancel-doc">取消</button></div>
+        </form>`:`<button type="button" class="case-btn" data-case-action="cancel-doc">關閉預覽</button>`}
+      </div>`;
+    renderVendorItems();
+  }
+  function renderVendorItems() {
+    const node=byId('caseVendorItems'), d=vendorPreview?.doc;
+    if(!node||!d)return;
+    const page=vendorPreview.page||0, size=25, from=page*size;
+    const cell=value=>e(value===null||value===''?'—':String(value));
+    node.innerHTML=d.items.length?`<div class="case-table-scroll table-viewport" tabindex="0" aria-label="廠商品項預覽">
+      <table class="case-table"><thead><tr>${['品名／規格','產品編號','數量','單位','單價','未稅','含稅'].map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead>
+      <tbody>${d.items.slice(from,from+size).map(i=>`<tr>${[i.name,i.code,i.quantity,i.unit,i.unitPrice,i.net,i.gross].map(value=>`<td>${cell(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      ${d.items.length>size?`<div class="case-preview-pager"><button type="button" class="case-btn" data-doc-page="${page-1}" ${page===0?'disabled':''}>上一頁</button>
+        <span>${from+1}–${Math.min(from+size,d.items.length)}／${d.items.length} 筆</span>
+        <button type="button" class="case-btn" data-doc-page="${page+1}" ${from+size>=d.items.length?'disabled':''}>下一頁</button></div>`:''}`:'';
+  }
+  async function readVendorDocument(file,vendor,kind,replaceKey) {
+    const c=order();
+    if(!c||!Cases.hasVendor(c,vendor))throw Error('請先確認目前案件含有此供應商的設備。');
+    vendorPreview={caseId:c.id,name:file.name,vendor,kind,replaceKey};
+    renderVendorPreview();
+    try{
+      vendorPreview.doc=await VendorDocs.read(file,vendor,kind);
+      status('PDF 解析完成，請核對文件預覽。');
+    }catch(err){
+      vendorPreview.error=err.message;
+      throw err;
+    }finally{renderVendorPreview();}
+  }
   function renderDetail() {
     clearQuoteResult();
     const node = byId('caseDetail');
@@ -252,6 +336,7 @@
           <label class="case-tick"><input type="checkbox" data-order="email" data-vendor="${m.vendor}" ${s.email ? 'checked' : ''}>Email 已寄出</label>
           <label class="case-tick"><input type="checkbox" data-order="line" data-vendor="${m.vendor}" ${s.line ? 'checked' : ''} ${!s.email ? 'disabled' : ''}>LINE 已通知</label></article>`;
         }).join('')}</section>` : ''}
+      ${vendorSection(c)}
       <div class="case-phase">
       <h4>請款前整理</h4>
       ${cv.length ? `<form id="caseInvoiceForm"><div class="case-fields">
@@ -263,10 +348,10 @@
       ${field('gross','含稅金額','','text','inputmode="decimal" required')}
       ${field('source','憑證檔名或參考（選填）')}
       </div>
-      <div class="case-actions"><label class="case-upload"><span id="caseInvoicePdfLabel">${e(cv.at(-1))}發票 PDF</span><input type="file" id="caseInvoicePdf" accept=".pdf"></label>
+      <div class="case-actions">
       <button class="case-btn primary">儲存發票</button>
       <label class="case-tick"><input type="checkbox" name="replace">更新同號發票資料</label></div>
-      <p id="casePdfHint" class="case-meta">PDF 擷取值為候選資料，請對照原始發票確認。</p></form>` : '<p>此案件沒有華茂或拍檔設備。</p>'}
+      </form>` : '<p>此案件沒有華茂或拍檔設備。</p>'}
       ${bill.map(({inv, link, vendor}) => {
         const entries = Cases.invoiceLinks(state, c, vendor);
         const stateLabel = Cases.billStatus(c, inv, link, entries);
@@ -304,7 +389,7 @@
         ${quotationForm(p)}
         <div class="case-fields"><label>附件類別<select id="caseDocKind"><option>銷貨單</option><option>報價</option><option>請款附件</option></select></label>
         <label><span id="caseDocLabel">銷貨單 PDF/Excel</span><input type="file" id="caseDocument" accept=".pdf,.xlsx,.xls"></label></div>
-        <ul>${c.docs.map(d => `<li>${e(d.kind)}・${e(d.name)}${d.summary ? ' ｜ ' + e(d.summary) : ''}</li>`).join('')}</ul>
+        <ul>${c.docs.filter(d=>!d.parsed).map(d => `<li>${e(d.kind)}・${e(d.name)}${d.summary ? ' ｜ ' + e(d.summary) : ''}</li>`).join('')}</ul>
       </section>
       ${Cases.hasVendor(c, '華茂') ? `<section class="case-section"><h4>華茂對帳資料</h4>
         <form id="caseHuamaoForm"><div class="case-fields">
@@ -312,6 +397,7 @@
         ${field('statement','對帳單',c.bills['華茂']?.statement || '')}${field('notes','備註',c.bills['華茂']?.notes || '')}
         </div><button class="case-btn primary">儲存華茂對帳資料</button></form>
       </section>` : ''}`;
+    renderVendorPreview();
   }
   function render() {
     indexCases();
@@ -460,6 +546,7 @@
     selected.clear();
     if (Array.isArray(work.selected)) for (const id of work.selected) if (ids.has(id)) selected.add(id);
     clearPosFile();
+    vendorPreview=null;
     current = ''; staged = null; filterPage = 0;
     saved();
     render();
@@ -565,36 +652,6 @@
     XLSX.writeFile(book, label + '_' + formatToday() + '.xlsx');
     status('已要求下載「' + label + '」。');
   }
-  function pdfInvoiceFields(text) {
-    // Candidate extraction only. Layouts vary, so a user verifies all four fields.
-    const s = clean(text).replace(/\s+/g, ' ');
-    const no = s.match(/發\s*票\s*(?:號\s*碼|字\s*軌)\s*[:：]?\s*([A-Z]{2}\s*[- ]?\s*\d{8})/i)?.[1] || '';
-    const d = s.match(/(?:發票日期|開立日期|日期)\s*[:：]?\s*((?:20\d{2}|1\d{2})[.\/-]\s*\d{1,2}[.\/-]\s*\d{1,2})/)?.[1] || '';
-    const readMoney = re => s.match(re)?.[1]?.replace(/,/g, '') || '';
-    return {no: no.replace(/[\s-]/g,''), date: dateInput(d.replace(/\s/g,'')),
-      net: readMoney(/(?:銷售額合計|未稅金額|未稅合計)\s*[:：]?\s*([\d,]+(?:\.\d{1,2})?)/),
-      tax: readMoney(/(?:稅額合計|營業稅額|稅額)\s*[:：]?\s*([\d,]+(?:\.\d{1,2})?)/),
-      gross: readMoney(/(?:含稅金額|含稅總計|總計金額|應付總額)\s*[:：]?\s*([\d,]+(?:\.\d{1,2})?)/)};
-  }
-  async function readInvoicePdf(file) {
-    if (!file || !order()) return;
-    const original = current, form = byId('caseInvoiceForm');
-    const extracted = await readPdfRecords(file, text => ({text, values: pdfInvoiceFields(text)}));
-    if (current !== original || form !== byId('caseInvoiceForm')) return;
-    const raw = extracted.map(p => p.text).join(' ');
-    if (form.elements.vendor.value === '拍檔' && /華\s*茂\s*資\s*訊|27632985/.test(raw)) {
-      throw Error('這份 PDF 含華茂資訊，請改選對應供應商或核對原始發票。');
-    }
-    let count = 0;
-    for (const name of ['no','date','net','tax','gross']) {
-      const candidates = [...new Set(extracted.map(x => x.values[name]).filter(Boolean))];
-      if (candidates.length === 1 && !form.elements[name].value) { form.elements[name].value = candidates[0]; count++; }
-    }
-    form.elements.source.value = file.name;
-    byId('casePdfHint').textContent = count ? '帶入 ' + count + ' 個候選欄位。請對照發票，補齊其餘欄位再儲存。' :
-      '此版型未辨識出可帶入的欄位。已帶入檔名，請由原件手動填寫。';
-    status('已讀取 PDF，請核對發票表單。');
-  }
   async function readDoc(file) {
     const c = order();
     if (!c || !file) return;
@@ -645,7 +702,7 @@
       target.value = '';
       if (files[target.id]) action(() => importExcel(upload, files[target.id]));
       if (target.id === 'caseWork') action(() => loadWork(upload));
-      if (target.id === 'caseInvoicePdf') action(() => readInvoicePdf(upload));
+      if(target.dataset?.docVendor)action(()=>readVendorDocument(upload,target.dataset.docVendor,target.dataset.docKind,target.dataset.docReplace));
       if (target.id === 'caseDocument') action(() => readDoc(upload));
     } else if (target.id === 'caseSelectPage') {
       for(const c of visibleCases){
@@ -667,8 +724,6 @@
       byId('casePickedRequests').textContent=staged.choices.size;
     } else if(target.id==='caseDocKind'){
       byId('caseDocLabel').textContent=target.value==='報價'?'內部系統報價單 PDF/Excel':target.value+' PDF/Excel';
-    } else if(target.name==='vendor'&&target.form?.id==='caseInvoiceForm'){
-      byId('caseInvoicePdfLabel').textContent=target.value+'發票 PDF';
     } else if (target.dataset.order) {
       const c = order(), v = target.dataset.vendor;
       const s = c.orders[v] ||= {};
@@ -690,6 +745,26 @@
     const b = event.target.closest('button');
     if (!b || busy) return;
     if(b.dataset.orderCopy){action(()=>copyOrders(b.dataset.orderCopy));return;}
+    if(b.dataset.docPage!==undefined){
+      const page=Number(b.dataset.docPage);
+      if(vendorPreview?.doc&&Number.isInteger(page)&&page>=0&&page*25<vendorPreview.doc.items.length){
+        vendorPreview.page=page;renderVendorItems();
+      }
+      return;
+    }
+    if(b.dataset.docInspect){
+      const c=order(), d=c&&VendorDocs.documents(c).find(d=>d.key===b.dataset.docInspect);
+      if(d){vendorPreview={caseId:c.id,doc:d.parsed,saved:true};renderVendorPreview();}
+      return;
+    }
+    if(b.dataset.docRemove){
+      const c=order(), d=c&&VendorDocs.documents(c).find(d=>d.key===b.dataset.docRemove);
+      if(d&&confirm('移除這份文件？已儲存的發票或回填可在請款前整理個別管理。')){
+        c.docs.splice(c.docs.indexOf(d),1);vendorPreview=null;changed();renderDetail();
+        status('已移除文件參考。');
+      }
+      return;
+    }
     if (b.dataset.open) {
       current=b.dataset.open; updateActiveRow(); renderDetail();
       byId('caseDetail').scrollIntoView({block:'start',behavior:'auto'});
@@ -712,6 +787,7 @@
       changed(); render();
     }
     const handlers = {
+      'cancel-doc':()=>{vendorPreview=null;renderVendorPreview();},
       'apply-pos-range':applyPosRange,
       'clear-pos-file':()=>{clearPosFile();staged=null;renderPreview();status('已取消選檔。');},
       commit, cancel: () => { staged = null; renderPreview(); },
@@ -741,7 +817,13 @@
     action(() => {
       const c = order();
       const f = new FormData(form);
-      if (form.id === 'caseInvoiceForm') {
+      if(form.id==='caseVendorConfirm'){
+        const pending=vendorPreview;
+        if(!pending?.doc||pending.saved||pending.caseId!==c.id||!f.has('confirmed'))throw Error('請先核對文件與目前案件。');
+        VendorDocs.save(state,c,pending.doc,pending.replaceKey,f.has('linkInvoice'));
+        vendorPreview=null;
+        status('已儲存文件關聯。'+(f.has('linkInvoice')?'請再核對發票金額與設備。':''));
+      } else if (form.id === 'caseInvoiceForm') {
         Cases.attachInvoice(state, c, Object.fromEntries(f), f.has('replace'));
         status('已儲存發票。請勾選已核對並儲存。');
       } else if (form.dataset.bill) {
