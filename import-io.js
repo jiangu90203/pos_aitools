@@ -76,8 +76,12 @@ const ImportIO = (() => {
   async function excel(file,mode,vendor){
     validateFile(file,mode==='work'?['json']:['xlsx','xls']);
     const buffer=await readArrayBuffer(file);
+    const sourceDigest=mode==='pos'&&globalThis.crypto?.subtle?
+      Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buffer)),b=>b.toString(16).padStart(2,'0')).join(''):'';
     const background=await tryWorker(buffer,file.name,mode,vendor);
-    return background?background.value:project(buffer,file.name,mode,vendor);
+    const value=background?background.value:project(buffer,file.name,mode,vendor);
+    if(sourceDigest)for(const row of value)row.sourceDigest=sourceDigest;
+    return value;
   }
   const pdfEngineReady=()=>typeof window.pdfjsLib?.getDocument==='function' && window.pdfjsLib.GlobalWorkerOptions;
   const pdfDataReady=()=>window.PDF_LOCAL_RESOURCES?.cmaps && window.PDF_LOCAL_RESOURCES?.fonts;

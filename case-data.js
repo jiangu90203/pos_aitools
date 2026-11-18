@@ -26,7 +26,8 @@ const Cases = (() => {
   const hasVendor = (order, vendor) => order.pos.devices.some(d => vendorForItem(d.item) === vendor);
   const quoteKey = value => norm(value).replace(/^qu(?=\d{11}$)/, '');
   const key = pos => JSON.stringify([quoteKey(pos.quote), norm(pos.shopId), norm(pos.merchant)]);
-  const signature = ({source, sheet, row, ...fields}) => JSON.stringify(fields);
+  const signature = ({source, sourceDigest, sheet, row, ...fields}) => JSON.stringify(fields);
+  const purchaseGroup = p => norm(p.shopId) ? 'shop:'+norm(p.shopId) : norm(p.merchant) ? 'merchant:'+norm(p.merchant) : '';
   const populated = value => value !== undefined && value !== null && value !== '';
   function requestNo(value) {
     const pr = cleanRequestNo(value);
@@ -62,12 +63,13 @@ const Cases = (() => {
     }).filter(p => p.merchant || p.quote || p.devices.length);
   }
   function previewPos(state, rows) {
-    const used = new Set();
-    const index = new Map(), quotes = new Map();
+    const index = new Map(), quotes = new Map(), groups = new Map();
     for (const order of state.cases) {
       const k = key(order.pos);
       if (!index.has(k)) index.set(k, []);
       index.get(k).push(order);
+      const g=purchaseGroup(order.pos);
+      if(g&&!groups.has(g))groups.set(g,order);
       const q = quoteKey(order.pos.quote);
       if (!q) continue;
       if (!quotes.has(q)) quotes.set(q, []);
@@ -77,30 +79,45 @@ const Cases = (() => {
     return rows.map(pos => {
       const k = key(pos);
       const peers = index.get(k) || [];
-      const exact = peers.filter(c => !used.has(c.id) && signature(c.pos) === signature(pos));
-      const matching = exact.find(c => c.pos.row === pos.row) || exact[0];
+      const matching = peers.find(({pos:old})=>old.row===pos.row&&old.sheet===pos.sheet&&
+        signature(old)===signature(pos)&&(
+          (pos.sourceDigest&&pos.sourceDigest===old.sourceDigest)||
+          ((!pos.sourceDigest||!old.sourceDigest)&&pos.source===old.source)||Boolean(pos.request)
+        ));
       const earlier = seen.get(k);
       seen.set(k, pos);
       if (matching) {
-        used.add(matching.id);
         return {type: 'same', pos, old: matching};
       }
       const related = (quotes.get(quoteKey(pos.quote)) || []).filter(c =>
         (pos.shopId && c.pos.shopId && norm(pos.shopId) === norm(c.pos.shopId)) ||
         (pos.merchant && norm(pos.merchant) === norm(c.pos.merchant) && (!pos.shopId || !c.pos.shopId)));
       const candidates = [...new Set([...peers, ...related])];
-      if (candidates.length || earlier) return {type: 'conflict', pos, candidates, earlier};
-      return {type: 'new', pos};
+      const relatedCase=groups.get(purchaseGroup(pos))||candidates[0];
+      if (candidates.length || earlier) return {type: 'conflict', pos, candidates, earlier, relatedCase};
+      return {type: 'new', pos, relatedCase};
     });
   }
   function commitPos(state, preview, choices) {
     const replaced = new Set();
+    const roots = new Map();
+    for (const [i,entry] of preview.entries()) {
+      const target=choices.get(i);
+      if(entry.type!=='conflict'||!target?.startsWith('case:'))continue;
+      const id=target.slice(5);
+      if(replaced.has(id)||!entry.candidates.some(c=>c.id===id)||!state.cases.some(c=>c.id===id))
+        throw Error('同一案件不可同時套用兩筆更新，且必須屬於候選案件。');
+      replaced.add(id);
+    }
     preview.forEach((entry, i) => {
-      if (entry.type === 'new' || choices.get(i) === 'add') state.cases.push(initCase(entry.pos));
+      if (entry.type === 'new' || entry.type==='conflict'&&(!choices.has(i)||choices.get(i)==='add')) {
+        const batch=initCase(entry.pos), group=purchaseGroup(entry.pos), related=entry.relatedCase||roots.get(group);
+        batch.purchaseBatch={id:batch.id,parentCaseId:related?.purchaseBatch?.parentCaseId||related?.id||'',createdAt:new Date().toISOString()};
+        if(group&&!roots.has(group))roots.set(group,batch);
+        state.cases.push(batch);
+      }
       if (entry.type !== 'conflict' || !choices.get(i)?.startsWith('case:')) return;
       const old = state.cases.find(c => c.id === choices.get(i).slice(5));
-      if (!old || replaced.has(old.id)) throw Error('同一案件不可同時套用兩筆更新。');
-      replaced.add(old.id);
       const before = old.pos;
       old.pos = entry.pos;
       const itemsChanged = JSON.stringify(before.devices) !== JSON.stringify(old.pos.devices) || before.merchant !== old.pos.merchant;
@@ -155,8 +172,11 @@ const Cases = (() => {
     if (!hasVendor(order, values.vendor)) throw Error('此案件沒有此供應商的設備。');
     const k = invoiceKey(values.vendor, values.no);
     let inv = state.invoices.find(i => i.key === k);
+    if(!inv&&state.invoices.some(i=>i.vendor===values.vendor&&i.corrections?.some(event=>event.from.no===values.no)))
+      throw Error('此發票號碼曾被人工修正。請先查看現有憑證的修正紀錄。');
     if (inv && !['date', 'net', 'gross', 'tax'].every(field => inv[field] === values[field])) {
       if (!replace) throw Error(`同一發票已存在（${inv.date}、未稅 ${inv.net}、含稅 ${inv.gross}）。確認新值後，勾選「更新同號發票資料」再儲存。`);
+      if(inv.date!==values.date)recordInvoiceCorrection(inv,values);
       Object.assign(inv, values);
       for (const link of inv.links) link.confirmed = false;
     }
@@ -168,6 +188,22 @@ const Cases = (() => {
       if (inv.links.length) inv.everShared = true;
       inv.links.push({caseId: order.id, slots: [], net: null, gross: null, pr: '', requestDate: ''});
     }
+    return inv;
+  }
+  function recordInvoiceCorrection(inv,values) {
+    (inv.corrections ||= []).push({from:{no:inv.no,date:inv.date},to:{no:values.no,date:values.date},at:new Date().toISOString()});
+  }
+  function correctInvoice(state,order,key,input) {
+    const inv=state.invoices.find(i=>i.key===key&&i.links.some(l=>l.caseId===order.id));
+    if(!inv)throw Error('找不到要修正的案件發票。');
+    const values=invoiceData({...inv,no:input.no,date:input.date});
+    if(values.no===inv.no&&values.date===inv.date)return inv;
+    if(state.invoices.some(i=>i!==inv&&i.vendor===inv.vendor&&
+      (i.no===values.no||i.corrections?.some(event=>event.from.no===values.no))))
+      throw Error('此發票號碼已屬於其他憑證。');
+    recordInvoiceCorrection(inv,values);
+    Object.assign(inv,{no:values.no,date:values.date,key:invoiceKey(inv.vendor,values.no)});
+    for(const link of inv.links)link.confirmed=false;
     return inv;
   }
   function invoiceLinks(state, order, vendor) {
@@ -228,7 +264,7 @@ const Cases = (() => {
     const book = XLSX.utils.book_new();
     addSheet(book, '拍檔請款彙整', billHeaders, details);
     addSheet(book, '拍檔發票明細', ['發票號碼', '發票日期', '整張發票未稅', '整張發票稅額', '整張發票含稅', '關聯案件數', '憑證來源'], invoices);
-    appendVendorSheets(book,orders,'拍檔',readyOnly?(order,doc)=>{
+    appendVendorSheets(book,state,orders,'拍檔',readyOnly?(order,doc)=>{
       const entries=invoiceLinks(state,order,'拍檔');
       const ready=entries.filter(({inv,link})=>isReady(billStatus(order,inv,link,entries)));
       return ready.some(({inv})=>doc.invoiceNo===inv.no ||
@@ -242,15 +278,21 @@ const Cases = (() => {
     XLSX.utils.book_append_sheet(book, ws, name);
     return ws;
   }
-  function appendVendorSheets(book,orders,vendor,include=()=>true) {
+  function appendVendorSheets(book,state,orders,vendor,include=()=>true) {
     const header=['案件來源列','SHOP ID','報價單編號','商家名稱','廠商','文件類型','文件單號','來源檔案'];
     const files=[], items=[];
+    const byCase = new Map(orders.map(c=>[c.id,[]]));
+    for(const inv of state.invoices){
+      if(vendor&&vendor!==inv.vendor)continue;
+      for(const link of inv.links)byCase.get(link.caseId)?.push({inv,link});
+    }
     for(const order of orders){
       for(const d of (typeof VendorDocs==='undefined'?[]:VendorDocs.documents(order))){
         const doc=d.parsed;
         if((vendor&&d.vendor!==vendor)||!hasVendor(order,d.vendor)||!include(order,doc))continue;
         const p=order.pos, base=[p.row,p.shopId,p.quote,p.merchant,d.vendor,d.kind,doc.id,d.name];
-        files.push([...base,doc.shipNo,doc.shipDate,doc.invoiceNo,doc.invoiceDate,doc.orderNo,
+        const invoice=VendorDocs.invoiceFields(state,order,doc,byCase.get(order.id));
+        files.push([...base,doc.shipNo,doc.shipDate,invoice.no,invoice.date,doc.orderNo,
           doc.buyer,doc.recipient,doc.net,doc.tax,doc.gross,doc.warnings.join('；')]);
         for(const i of doc.items) items.push([...base,i.code,i.name,i.unit,i.quantity,i.unitPrice,i.net,i.gross,i.raw]);
       }
@@ -289,16 +331,23 @@ const Cases = (() => {
     const book = XLSX.utils.book_new();
     addSheet(book, '華茂款項匯入資訊', hmHeaders, rows);
     if (issues.length) addSheet(book, '待確認', ['報價單編號', '公司名稱', '待確認事項'], issues);
-    appendVendorSheets(book,orders,'華茂');
+    appendVendorSheets(book,state,orders,'華茂');
     return book;
   }
   function orderMessages(order) {
     const messages = [];
     if (order.pos.issues.length || !order.pos.merchant) return messages;
-    for (const vendor of vendors) {
-      const agg = Object.create(null);
-      for (const d of order.pos.devices) if (d.qty > 0 && vendorForItem(d.item) === vendor) agg[d.item] = (agg[d.item] || 0) + d.qty;
-      if (Object.keys(agg).length) messages.push(buildVendorMessageFromGroup({info: order.pos, vendor, agg, rows: [order.pos.row]}));
+    const groups=new Map();
+    for(const d of order.pos.devices){
+      const vendor=vendorForItem(d.item);
+      if(!vendor||!(d.qty>0))continue;
+      if(!groups.has(vendor))groups.set(vendor,Object.create(null));
+      const agg=groups.get(vendor);
+      agg[d.item]=(agg[d.item]||0)+d.qty;
+    }
+    for(const vendor of new Set([...vendors,...groups.keys()])){
+      const agg=groups.get(vendor);
+      if(agg)messages.push(buildVendorMessageFromGroup({info:order.pos,vendor,agg,rows:[order.pos.row]}));
     }
     return messages;
   }
@@ -518,7 +567,7 @@ const Cases = (() => {
     formatSapDates(addSheet(book, sapName, sapHeaders, rows), rows.length);
     const unique = [...new Map(notes.map(n => [JSON.stringify(n), n])).values()];
     if (unique.length) addSheet(book, '待確認', ['來源列', '報價單編號', '公司名稱', '待確認事項'], unique);
-    appendVendorSheets(book,orders);
+    appendVendorSheets(book,state,orders);
     return book;
   }
   function requestRows(wb, vendor, source) {
@@ -555,6 +604,9 @@ const Cases = (() => {
     }
     for (const inv of state.invoices) {
       const verified = invoiceData(inv);
+      if(inv.corrections!==undefined&&(!Array.isArray(inv.corrections)||inv.corrections.some(event=>
+        ![event?.from,event?.to].every(v=>/^[A-Z]{2}\d{8}$/.test(v?.no)&&/^\d{4}-\d{2}-\d{2}$/.test(v.date))||
+        typeof event.at!=='string')))throw Error('工作檔的發票修正紀錄不完整。');
       if (inv.key !== invoiceKey(verified.vendor, verified.no) || keys.has(inv.key) || !Array.isArray(inv.links) ||
           !inv.links.length || inv.links.some(l => !ids.has(l.caseId) || !Array.isArray(l.slots) ||
             (l.net !== null && typeof l.net !== 'number') || (l.gross !== null && typeof l.gross !== 'number'))) throw Error('工作檔的發票連結不完整。');
@@ -567,7 +619,7 @@ const Cases = (() => {
     return state;
   }
   return {vendors, sapName, sapHeaders, hmHeaders, create, desc, hasVendor, quoteKey, date, amount, posRows, previewPos,
-    commitPos, attachInvoice, invoiceLinks, invoiceData, allocation, linkSlots, billStatus, descriptionFor,
+    commitPos, attachInvoice, correctInvoice, invoiceLinks, invoiceData, allocation, linkSlots, billStatus, descriptionFor,
     isReady, orderMessages, billWorkbook, huamaoWorkbook, sapTemplate, quotationRows, salesCandidates,
     sapWorkbook, requestRows, restore, quotationDocument};
 })();

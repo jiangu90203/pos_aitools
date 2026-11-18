@@ -11,11 +11,11 @@ const VendorDocs = (() => {
   }
   const line = row => row.map(c=>c.text).join(' ');
   const currency = '(\\d[\\d,]*(?:\\.\\d{1,3})?)(?![\\d,.])';
-  const datePattern = /((?:20\d{2}|1\d{2})[-/.]\d{1,2}[-/.]\d{1,2})(?!\d)/;
+  const datePattern = /((?:20\d{2}|1\d{2})[-/.年]\d{1,2}[-/.月]\d{1,2}日?)(?!\d)/;
   const invoicePattern = /發票號碼[:：]?([A-Z]{2}\d{8})(?!\d)/i;
   const partnerShip = /出貨單號[:：]?(S41-\d+)/i;
   const dateOf = value => {
-    try{return value?Cases.date(value):'';}
+    try{return value?Cases.date(value.replace(/[年月]/g,'-').replace(/日$/,'')):'';}
     catch{return '';}
   };
   function group(items) {
@@ -113,12 +113,12 @@ const VendorDocs = (() => {
     const orderNo=vendor==='拍檔' ? take('訂單單號',/(?:訂單單號|訂單編號)[:：]?(S21-\d+)/i) : '';
     const shipDate=sale ? dateOf(take(vendor==='華茂'?'銷貨日期':'出貨日期',
       new RegExp((vendor==='華茂'?'銷貨日期':'出貨日期')+'[:：]?'+datePattern.source))) : '';
-    let invoiceDate='';
-    if(sale)invoiceDate=dateOf(take('發票日期',new RegExp('發票日期[:：]?'+datePattern.source)));
-    else{
+    let invoiceDate=dateOf(take('發票日期',new RegExp('發票日期[:：]?'+datePattern.source)));
+    if(!sale&&!sourceFields['發票日期']){
       const dates=[...new Set(pages.map(page=>{
         const index=page.findIndex(row=>compact(line(row))===typeTitle);
-        return index<0?'':page.slice(index+1,index+3).map(row=>compact(line(row)).match(datePattern)?.[1]).find(Boolean)||'';
+        return index<0?'':page.slice(index+1,index+3).map(row=>
+          compact(line(row)).match(new RegExp('^'+datePattern.source+'$'))?.[1]).find(Boolean)||'';
       }).filter(Boolean))];
       if(dates.length>1)throw needsReview('同一份文件有多個發票日期，請拆成個別單據後匯入。');
       if(dates[0])sourceFields['發票日期']=dates[0];
@@ -172,6 +172,25 @@ const VendorDocs = (() => {
   }
   const documents = order => order.docs.filter(d=>d?.key&&Object.hasOwn(issuers,d.vendor)&&kinds.includes(d.kind)&&
     d.parsed?.key===d.key&&Array.isArray(d.parsed.items)&&Array.isArray(d.parsed.warnings));
+  function invoiceFields(state,order,doc,linked=Cases.invoiceLinks(state,order,doc.vendor)) {
+    const candidates=new Map();
+    const entries=linked.filter(({inv})=>inv.vendor===doc.vendor);
+    for(const {parsed:ref} of documents(order)){
+      if(ref.vendor!==doc.vendor||ref.kind!=='發票'||!ref.invoiceReady)continue;
+      const sameNumber=doc.invoiceNo&&doc.invoiceNo===ref.invoiceNo;
+      if(doc.invoiceNo?!sameNumber:(!doc.shipNo||doc.shipNo!==ref.shipNo))continue;
+      const inv=entries.find(({inv})=>inv.no===ref.invoiceNo||
+        (inv.source===ref.name&&inv.corrections?.some(event=>event.from.no===ref.invoiceNo)))?.inv;
+      if(inv)candidates.set(inv.key,inv);
+    }
+    if(doc.invoiceNo&&!candidates.size){
+      const inv=entries.find(({inv})=>inv.no===doc.invoiceNo||
+        (inv.source===doc.name&&inv.corrections?.some(event=>event.from.no===doc.invoiceNo)))?.inv;
+      if(inv)candidates.set(inv.key,inv);
+    }
+    const current=candidates.size===1?[...candidates.values()][0]:null;
+    return {no:current?.no||doc.invoiceNo,date:current?.date||doc.invoiceDate,ambiguous:candidates.size>1};
+  }
   function association(state,order,doc) {
     if(!Cases.hasVendor(order,doc.vendor))throw Error('此案件沒有'+doc.vendor+'的設備，無法關聯。');
     if(!doc.key)throw Error('缺少文件單號，請核對原始文件。');
@@ -293,12 +312,13 @@ const VendorDocs = (() => {
         const d=docs[n];
         if(!d.invoiceNo||[d.net,d.tax,d.gross].some(v=>v==null))continue;
         const invoiceKey=JSON.stringify([d.vendor,'invoiceNo',d.invoiceNo]);
-        const amount=JSON.stringify([d.net,d.tax,d.gross]);
-        if(totals.has(invoiceKey)&&totals.get(invoiceKey)!==amount)group.mismatch=true;
+        const prior=totals.get(invoiceKey);
+        if(prior&&(['net','tax','gross'].some(key=>prior[key]!==d[key])||
+          (prior.invoiceDate&&d.invoiceDate&&prior.invoiceDate!==d.invoiceDate)))group.mismatch=true;
         const savedInvoice=invoiceRecords.get(invoiceKey);
         if(savedInvoice&&(['net','tax','gross'].some(key=>savedInvoice[key]!==d[key])||
           (d.invoiceDate&&savedInvoice.date!==d.invoiceDate)))group.mismatch=true;
-        totals.set(invoiceKey,amount);
+        if(!prior?.invoiceDate)totals.set(invoiceKey,d);
       }
     });
     return docs.map((doc,i)=>{
@@ -318,5 +338,5 @@ const VendorDocs = (() => {
       return {doc,caseId:matches.length===1?matches[0]:'',matches,previous,type:reason?'review':'ready',reason};
     });
   }
-  return {kinds,read,association,save,documents,planBatch};
+  return {kinds,read,association,save,documents,invoiceFields,planBatch};
 })();

@@ -12,7 +12,7 @@
   let batchItems=[], batchView='', batchPage=0, batchEditing=-1, batchAffected=new Set();
   let showOrders=false, detailOpener=null;
   const pageSize = 30, previewSize = 20, orderSize = 12;
-  let quoteUrl='', orderFrame=0, orderPage=0, orderDirty=true, orderMessages=[];
+  let quoteUrl='', orderFrame=0, orderDirty=true, ordersByVendor=new Map();
   let caseIndex = new Map(), indexedCases, billsByCase = new Map(), visibleCases = [], filterFrame = 0;
   let stageByCase = new Map();
   const order = () => caseIndex.get(current)?.record;
@@ -265,7 +265,7 @@
         <td>${p.row}</td><td>${e(p.quote || '—')}</td><td>${e(p.merchant || '—')}</td>
         <td>${e(tags)}</td><td>${e(flags)}</td>
         <td><span class="erp-badge ${docFlag}">${({complete:'齊全',missing:'缺文件',review:'待確認'})[docFlag]||'—'}</span></td>
-        <td><button type="button" class="case-btn" data-open="${e(c.id)}">查看</button></td></tr>`;
+        <td><button type="button" class="case-btn" data-open="${e(c.id)}">${uiIcon('eye')} 查看</button></td></tr>`;
     }).join('') : '<tr><td colspan="8" class="case-empty">沒有符合條件的案件。可調整篩選或匯入 POS 設備即時庫存。</td></tr>';
   }
   function renderSelection(count) {
@@ -329,14 +329,19 @@
     const start=page*previewSize,end=Math.min(start+previewSize,items.length);
     let contents='';
     if(type==='pos'){
-      contents=`<p class="case-meta">本次範圍：Excel 第 ${staged.from} 至 ${staged.to} 列</p><p>新增 ${counts.new} 筆，重複 ${counts.same} 筆，需決定 ${counts.conflict} 筆。未選擇處理方式的差異將略過。</p>`;
+      contents=`<p class="case-meta">本次範圍：Excel 第 ${staged.from} 至 ${staged.to} 列</p>
+        <p>新增 ${counts.new} 筆，重複 ${counts.same} 筆，需決定 ${counts.conflict} 筆。${counts.same?' 已辨識為同一筆來源資料的列將略過。':''}</p>
+        ${items.length?`<div class="case-actions">
+        <button type="button" class="case-btn" data-case-action="pos-add-all">全部視為新增另一批次</button>
+        <button type="button" class="case-btn" data-case-action="pos-skip-all">全部暫不匯入</button></div>`:''}
+        <p id="casePosDecisions" role="status">${posDecisions()}</p>`;
       for(const index of items.slice(start,end)){
         const entry=rows[index];
-        const value=choices.get(index)||'';
+        const value=choices.get(index)||'add';
         contents+=`<div class="case-conflict"><strong>${e(entry.pos.quote)} ${e(entry.pos.merchant)}・新檔第 ${entry.pos.row} 列</strong>
           <div data-candidate="${index}">${comparePos(entry,value)}</div>
           <label>處理方式<select data-choice="${index}">
-            ${option('','暫不匯入',value)}${option('add','新增為另一批次',value)}
+            ${option('skip','暫不匯入',value)}${option('add','新增另一批次',value)}
             ${entry.candidates.map(c=>option('case:'+c.id,'更新原第 '+c.pos.row+' 列',value)).join('')}
           </select></label></div>`;
       }
@@ -356,8 +361,28 @@
       <button type="button" class="case-btn" data-case-action="preview-next" ${end===items.length?'disabled':''}>預覽下一頁</button>
       </div>`;
     node.innerHTML = `<strong>${e(name)}</strong>${contents}<div class="case-actions">
-      <button type="button" class="case-btn primary" data-case-action="commit"><span aria-hidden="true">✓</span> ${type==='pos'?'確認匯入':'套用匯入'}</button>
+      <button type="button" class="case-btn primary" data-case-action="commit">${uiIcon('check')} ${type==='pos'?'確認匯入':'套用匯入'}</button>
       <button type="button" class="case-btn" data-case-action="cancel">取消</button></div>`;
+  }
+  function posDecisions() {
+    const {counts,items,rows,choices}=staged;
+    let added=counts.new, skipped=counts.same, updated=0, issues=0;
+    for(const i of items){
+      const value=choices.get(i)||'add';
+      if(value==='add')added++;
+      else if(value==='skip')skipped++;
+      else updated++;
+    }
+    for(const [i,row] of rows.entries()){
+      if(row.type!=='same'&&choices.get(i)!=='skip'&&row.pos.issues.length)issues++;
+    }
+    return `預計新增 ${added} 筆｜略過 ${skipped} 筆｜更新 ${updated} 筆｜數量異常 ${issues} 筆`;
+  }
+  function setPosChoices(value,button) {
+    if(staged?.type!=='pos')return;
+    for(const index of staged.items)staged.choices.set(index,value);
+    renderPreview();
+    byId('casePreview').querySelector('[data-case-action="'+button+'"]')?.focus();
   }
   function quotationForm(p) {
     return `<section class="case-section"><h4>內部系統報價單 PDF</h4>
@@ -391,7 +416,7 @@
   function vendorSection(c) {
     const docs=VendorDocs.documents(c);
     return `<section class="case-section" aria-label="廠商交易文件">
-      <h4><span aria-hidden="true">▤</span> 廠商銷貨單與發票</h4>
+      <h4>${uiIcon('receipt-text')} 廠商銷貨單與發票</h4>
       <div class="case-doc-grid">${Cases.vendors.flatMap(vendor=>VendorDocs.kinds.map(kind=>{
         const canImport=Cases.hasVendor(c,vendor);
         const entries=docs.filter(d=>d.vendor===vendor&&d.kind===kind);
@@ -402,7 +427,7 @@
             <span class="case-meta">${e(d.parsed.id)} · ${d.parsed.warnings.length?'部分欄位待核對':'已確認文件關聯'}</span>
             <div class="case-actions">
             <button type="button" class="case-btn" data-doc-inspect="${e(d.key)}">查看結果</button>
-            <button type="button" class="case-btn" data-doc-remove="${e(d.key)}">移除</button>
+            <button type="button" class="case-btn" data-doc-remove="${e(d.key)}">${uiIcon('trash')} 移除</button>
             </div>${vendorFileControl(vendor,kind,'替換這份文件',d.key,!canImport)}</div>`).join('')}
           </div>`;
       })).join('')}</div>
@@ -422,17 +447,20 @@
         <p class="${pending.error?'case-warning':'case-meta'}">${e(pending.error||'正在解析 PDF…')}</p></div>`;return;
     }
     const d=pending.doc;
+    const invoice=VendorDocs.invoiceFields(state,c,d);
     let evidence=[], problem='';
     try{evidence=VendorDocs.association(state,c,d);}
     catch(err){problem=err.message;}
     const fields=[['文件單號',d.id],['銷貨／出貨單號',d.shipNo],['銷貨／出貨日期',d.shipDate],
-      ['發票號碼',d.invoiceNo],['發票日期',d.invoiceDate],['廠商訂單單號',d.orderNo],
+      ['發票號碼',invoice.no],['發票日期',invoice.date],['廠商訂單單號',d.orderNo],
       ['帳款客戶',d.buyer],['收件／轉寄資訊',d.recipient],['未稅',d.net],['稅額',d.tax],['含稅',d.gross]];
     const cell=value=>e(value===null||value===''?'—':String(value));
     node.innerHTML=`<div class="case-doc-card case-doc-preview">
       <strong>${e(d.vendor)} ${e(d.kind)} · ${e(d.name)} · PDF</strong>
       <p class="case-meta">${pending.saved?'已保存':'待確認'} · 案件 ${e(labelFor(c))}</p>
       <p class="${problem?'case-warning':'case-meta'}">${e(problem || evidence.join('；') || '缺少可直接核對的案件識別。請拿原件核對收件、品項及案件後再確認。')}</p>
+      ${invoice.ambiguous?'<p class="case-warning">此單據有多張相符發票，請查看各筆發票。</p>':
+        invoice.no!==d.invoiceNo||invoice.date!==d.invoiceDate?`<p class="case-meta">已帶入關聯發票或人工修正資訊。原始辨識值 ${e(d.invoiceNo||'—')} ｜ ${e(d.invoiceDate||'—')}</p>`:''}
       ${d.warnings.length?`<p class="case-warning">${e(d.warnings.join(' '))}</p>`:''}
       <dl class="case-doc-values">${fields.map(([label,value])=>`<div><dt>${label}</dt><dd>${cell(value)}</dd></div>`).join('')}</dl>
       <div id="caseVendorItems"></div>
@@ -453,7 +481,7 @@
     node.innerHTML=d.items.length?`<div class="erp-table-shell"><div id="caseDocTable" class="case-table-scroll table-viewport" tabindex="0" aria-label="廠商品項預覽">
       <table class="case-table"><thead><tr>${['品名／規格','產品編號','數量','單位','單價','未稅','含稅'].map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead>
       <tbody>${d.items.slice(from,from+size).map(i=>`<tr>${[i.name,i.code,i.quantity,i.unit,i.unitPrice,i.net,i.gross].map(value=>`<td>${cell(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-      <button type="button" id="caseDocTableGrip" class="erp-resize" aria-controls="caseDocTable" aria-label="調整表格高度。可拖曳、點按或用方向鍵微調"><span aria-hidden="true">⠿</span></button></div>
+      <button type="button" id="caseDocTableGrip" class="erp-resize" aria-controls="caseDocTable" aria-label="調整表格高度。可拖曳、點按或用方向鍵微調">${uiIcon('grip')}</button></div>
       ${d.items.length>size?`<div class="case-preview-pager"><button type="button" class="case-btn" data-doc-page="${page-1}" ${page===0?'disabled':''}>上一頁</button>
         <span>${from+1}–${Math.min(from+size,d.items.length)}／${d.items.length} 筆</span>
         <button type="button" class="case-btn" data-doc-page="${page+1}" ${from+size>=d.items.length?'disabled':''}>下一頁</button></div>`:''}`:'';
@@ -482,12 +510,22 @@
     const p = c.pos, partner = Cases.desc(c, '拍檔'), messages = Cases.orderMessages(c);
     const cv = Cases.vendors.filter(v => Cases.hasVendor(c, v));
     const bill = cv.flatMap(v => Cases.invoiceLinks(state, c, v).map(entry => ({...entry, vendor: v})));
+    const hints=new Map();
+    const formVendor=cv.at(-1);
+    for(const {parsed:d} of VendorDocs.documents(c)){
+      if(d.vendor===formVendor&&d.kind==='銷貨單'&&d.invoiceNo&&d.invoiceDate&&
+        !bill.some(({inv})=>inv.vendor===d.vendor&&(inv.no===d.invoiceNo||inv.corrections?.some(x=>x.from.no===d.invoiceNo)))){
+        hints.set(d.invoiceNo+' '+d.invoiceDate,d);
+      }
+    }
+    const hint=hints.size===1?[...hints.values()][0]:null;
     const sale = Cases.salesCandidates(state, c).sales;
     node.innerHTML = `<div class="case-detail-top">
       <div><h3>${e(p.merchant || '待補公司名稱')}</h3><p>${e(p.quote || '無報價單號')} ｜ SHOP ID ${e(p.shopId || '—')} ｜ 第 ${p.row} 列</p></div>
       <button type="button" class="case-btn" data-case-action="close">關閉詳情</button></div>
       <p id="caseDetailFeedback" class="case-meta" aria-live="polite"></p>
       <p class="case-meta">${e(p.source)} ｜ ${e(p.sheet)}${p.request ? ' ｜ POS 設備請款單號 ' + e(p.request) : ''}</p>
+      ${c.purchaseBatch?`<p class="case-meta">採購批次 ${e(c.purchaseBatch.id)}${c.purchaseBatch.parentCaseId?' ｜ 原案件 '+e(c.purchaseBatch.parentCaseId):''}</p>`:''}
       <p>設備：${p.devices.map(d => `${e(d.raw)} × ${d.qty ?? '待確認'}`).join('、') || '—'}</p>
       ${p.issues.length ? `<p class="case-warning">${e(p.issues.join('；'))}。請更正 POS 後補匯入。</p>` : ''}
       ${c.review ? '<p class="case-warning">設備資料已變更。請核對發票設備與單價，再按下方確認。</p><button type="button" class="case-btn" data-case-action="review">已核對更新後的設備資料</button>' : ''}
@@ -509,15 +547,15 @@
       ${vendorSection(c)}
       <div class="case-phase">
       <h4>請款前整理</h4>
-      ${cv.length ? `<form id="caseInvoiceForm"><div class="case-fields">
+      ${cv.length ? `<form id="caseInvoiceForm" data-auto-no="${e(hint?.invoiceNo||'')}" data-auto-date="${e(hint?.invoiceDate||'')}"><div class="case-fields">
       <label>供應商<select name="vendor">${cv.slice().reverse().map(v => option(v,v)).join('')}</select></label>
-      ${field('no','採購發票號碼','','text','placeholder="AB12345678" required')}
-      ${field('date','發票日期','','date','required')}
+      ${field('no','採購發票號碼',hint?.invoiceNo||'','text','placeholder="AB12345678" required')}
+      ${field('date','發票日期',hint?.invoiceDate||'','date','required')}
       ${field('net','未稅金額','','text','inputmode="decimal" required')}
       ${field('tax','稅額（選填）','','text','inputmode="decimal"')}
       ${field('gross','含稅金額','','text','inputmode="decimal" required')}
       ${field('source','憑證檔名或參考（選填）')}
-      </div>
+      </div>${hint?'<p class="case-meta">已帶入銷貨單的發票號碼與日期。正式發票可補入採購金額。</p>':''}
       <div class="case-actions">
       <button class="case-btn primary">儲存發票</button>
       <label class="case-tick"><input type="checkbox" name="replace">更新同號發票資料</label></div>
@@ -525,7 +563,17 @@
       ${bill.map(({inv, link, vendor}) => {
         const entries = Cases.invoiceLinks(state, c, vendor);
         const stateLabel = Cases.billStatus(c, inv, link, entries);
-        return `<form class="case-bill" data-bill="${e(inv.key)}"><strong>${e(vendor)}・${e(inv.no)}・${e(inv.date)}</strong>
+        return `<section class="case-bill">
+        <details><summary>修正 ${e(inv.no)} 的發票號碼或日期</summary>
+          <form data-invoice-correction="${e(inv.key)}">
+            <div class="case-fields">${field('no','發票號碼',inv.no,'text','required')}${field('date','發票日期',inv.date,'date','required')}</div>
+            <p class="case-meta">修正會更新此憑證及其關聯案件，請款核對狀態會重設。</p>
+            <button type="submit" class="case-btn">${uiIcon('square-pen')} 儲存修正</button>
+            ${inv.corrections?.length?`<ul>${inv.corrections.map(({from,to,at})=>
+              `<li>${e(from.no)} ${e(from.date)} → ${e(to.no)} ${e(to.date)} <time datetime="${e(at)}">${e(at)}</time></li>`).join('')}</ul>`:''}
+          </form>
+        </details>
+        <form data-bill="${e(inv.key)}"><strong>${e(vendor)}・${e(inv.no)}・${e(inv.date)}</strong>
           <p class="case-meta">未稅 ${money(inv.net)} ｜ 稅額 ${money(inv.tax)} ｜ 含稅 ${money(inv.gross)} ｜ ${stateLabel}${inv.source ? ' ｜ ' + e(inv.source) : ''}</p>
           <fieldset><legend>發票對應設備${entries.length === 1 ? '（未指定時採同廠商全部設備）' : ''}</legend>
           ${p.devices.filter(d => vendorForItem(d.item) === vendor && d.qty > 0).map(d =>
@@ -540,7 +588,7 @@
           ${tri('claimed','已請款',link.claimed)}${tri('paid','已撥款',link.paid)}</div>
           <div class="case-actions"><button class="case-btn primary">儲存核對與回填</button>
           <button class="case-btn" type="button" data-detach="${e(inv.key)}">移除此案連結</button></div>
-        </form>`;
+        </form></section>`;
       }).join('')}
       </div>
       <section class="case-section"><h4>報價、銷售發票及附件備註</h4>
@@ -747,52 +795,69 @@
   }
   function scheduleOrderPreview() {
     orderDirty=true;
-    orderPage=0;
     byId('caseOrderFeedback').textContent='';
     if(!showOrders||orderFrame)return;
     if(typeof requestAnimationFrame!=='function'){drawOrderPreview();return;}
     orderFrame=requestAnimationFrame(()=>{orderFrame=0;drawOrderPreview();});
   }
-  function selectedMessages() {
+  function selectedOrders() {
     if(orderDirty){
-      orderMessages=selected.size?focused().flatMap(Cases.orderMessages):[];
+      ordersByVendor=new Map();
+      for(const c of focused())for(const msg of Cases.orderMessages(c)){
+        if(!ordersByVendor.has(msg.vendor))ordersByVendor.set(msg.vendor,[]);
+        ordersByVendor.get(msg.vendor).push(msg);
+      }
       orderDirty=false;
     }
-    return orderMessages;
-  }
-  function orderText(messages) {
-    const channel=byId('caseOrderChannel').value||'lineMessage';
-    return messages.map(m=>channel==='all'?[m.subject,m.emailBody,m.lineMessage].join('\n\n'):m[channel]).join('\n\n');
+    return ordersByVendor;
   }
   function drawOrderPreview() {
-    const node=byId('caseOrderPreview'), messages=selectedMessages();
-    if(!messages.length){
-      node.innerHTML='<p class="case-meta">'+(selected.size?'已勾選的案件沒有可下單的明細，請先核對設備與數量。':'勾選案件後即可預覽下單文字。')+'</p>';
-      return;
-    }
-    const items=messages.slice(orderPage*orderSize,(orderPage+1)*orderSize);
-    node.innerHTML=Cases.vendors.map(vendor=>{
-      const count=messages.filter(m=>m.vendor===vendor).length;
-      if(!count)return '';
-      const visible=items.filter(m=>m.vendor===vendor);
-      return `<section class="case-order-group"><div class="case-detail-top"><strong>${e(vendor)} · ${count} 筆</strong>
-        <button type="button" class="case-btn" data-order-copy="${e(vendor)}">一鍵複製全部 ${e(vendor)}</button></div>
-        ${visible.length?`<textarea readonly rows="6" aria-label="${e(vendor)}下單文字預覽">${e(orderText(visible))}</textarea>`:
-        '<p class="case-meta">此頁無此廠商的訊息，可翻頁預覽。</p>'}</section>`;
-    }).join('')+(messages.length>orderSize?`<nav class="case-preview-pager" aria-label="下單預覽分頁">
-      <button type="button" class="case-btn" data-case-action="order-prev" ${orderPage===0?'disabled':''}>上一頁</button>
-      <span>${orderPage+1} ／ ${Math.ceil(messages.length/orderSize)} 頁 · 每次複製包含該廠商所有頁</span>
-      <button type="button" class="case-btn" data-case-action="order-next" ${(orderPage+1)*orderSize>=messages.length?'disabled':''}>下一頁</button>
-      </nav>`:'');
+    const node=byId('caseOrderPreview'), groups=selectedOrders();
+    node.innerHTML=[...groups].map(([vendor,messages])=>{
+      const address=vendorRecipient(vendor), {subject,body,line}=vendorCommunication(vendor,messages);
+      return `<section class="case-order-group">
+        <div class="case-detail-top"><h4>${e(vendor)} · ${messages.length} 筆</h4>
+          <label class="erp-recipient">${e(vendor)}收件信箱
+          <input type="text" inputmode="email" autocomplete="off" placeholder="留空時由 Gmail 填寫" maxlength="512" data-order-recipient="${e(vendor)}" value="${e(address)}"></label></div>
+        <div class="erp-communications">
+          <div class="erp-channel"><strong>${uiIcon('mail')} Email</strong>
+            <label>主旨<input readonly aria-label="${e(vendor)} Email 主旨" value="${e(subject)}"></label>
+            <label>內文<textarea readonly rows="7" aria-label="${e(vendor)} Email 內文">${e(body)}</textarea></label>
+            <div class="case-actions">
+              <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="email">${uiIcon('copy')} 複製 Email</button>
+              <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="subject">複製主旨</button>
+              <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="body">複製內文</button>
+              <button type="button" class="case-btn primary" data-order-gmail="${e(vendor)}">${uiIcon('brand-gmail')} 使用 Gmail 撰寫</button>
+              <a class="case-btn" href="https://mail.google.com/mail/" target="_blank" rel="noopener noreferrer">手動開啟 Gmail</a>
+            </div></div>
+          <div class="erp-channel"><strong>${uiIcon('brand-line')} LINE</strong>
+            <label>下單文字<textarea readonly rows="9" aria-label="${e(vendor)} LINE 下單文字">${e(line)}</textarea></label>
+            <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="line">${uiIcon('copy')} 複製 LINE</button>
+          </div></div></section>`;
+    }).join('')||'<p class="case-meta">勾選有有效設備的案件後，可依供應商取得下單文字。</p>';
   }
-  async function copyOrders(vendor) {
+  async function copyOrders(vendor,channel) {
     const feedback=byId('caseOrderFeedback');
     try {
-      await copy(orderText(selectedMessages().filter(m=>m.vendor===vendor)));
-      feedback.textContent='已複製 '+vendor+' 的下單文字。';
+      const data=vendorCommunication(vendor,selectedOrders().get(vendor)||[]);
+      await copy(channel==='email'?[data.subject,data.body].join('\n\n'):data[channel]);
+      feedback.textContent='已複製 '+vendor+' 的'+(channel==='line'?' LINE':' Email')+'文字。';
     } catch(err) {
       feedback.textContent=err.message;
     }
+  }
+  function openVendorGmail(vendor) {
+    const feedback=byId('caseOrderFeedback');
+    try{
+      const messages=selectedOrders().get(vendor);
+      if(!messages?.length)throw Error('請先勾選有效的下單案件。');
+      const recipient=byId('caseOrderPreview').querySelectorAll('[data-order-recipient]');
+      const current=Array.from(recipient).find(input=>input.dataset.orderRecipient===vendor);
+      const {subject,body}=vendorCommunication(vendor,messages);
+      const url=gmailComposeUrl(current?.value??vendorRecipient(vendor),subject,body);
+      window.open(url,'_blank','noopener,noreferrer');
+      feedback.textContent='已要求開啟 Gmail。請檢查登入帳號與信件內容，再於 Gmail 寄送。';
+    }catch(err){feedback.textContent=err.message;}
   }
   function clearQuoteResult() {
     if(!quoteUrl)return;
@@ -908,16 +973,21 @@
       changed(); renderSelection();
     } else if(staged&&target.dataset.choice!==undefined){
       const i=Number(target.dataset.choice);
-      if(target.value)staged.choices.set(i,target.value);else staged.choices.delete(i);
+      staged.choices.set(i,target.value);
       const entry=staged.rows[i];
       const comparison=byId('casePreview').querySelector('[data-candidate="'+i+'"]');
       if(comparison)comparison.innerHTML=comparePos(entry,target.value);
+      byId('casePosDecisions').textContent=posDecisions();
     } else if(staged&&target.dataset.requestChoice!==undefined){
       const i=Number(target.dataset.requestChoice);
       if(target.checked)staged.choices.set(i,true);else staged.choices.delete(i);
       byId('casePickedRequests').textContent=staged.choices.size;
     } else if(target.id==='caseDocKind'){
       byId('caseDocLabel').textContent=target.value==='報價'?'內部系統報價單 PDF/Excel':target.value+' PDF/Excel';
+    } else if(target.dataset.orderRecipient){
+      const feedback=byId('caseOrderFeedback');
+      try{feedback.textContent=saveVendorRecipient(target.dataset.orderRecipient,target.value)?'收件人設定已在此瀏覽器保存。':'收件人設定會在本次頁面保留。';}
+      catch(err){feedback.textContent=err.message;}
     } else if (target.dataset.order) {
       const c = order(), v = target.dataset.vendor;
       const s = c.orders[v] ||= {};
@@ -928,9 +998,10 @@
       line.checked = Boolean(s.line); line.disabled = !s.email;
     } else if (['caseVendor','caseStateFilter','caseDocumentFilter'].includes(target.id)) {
       filterPage = 0; renderList();
-    } else if(target.id==='caseOrderChannel'){
-      byId('caseOrderFeedback').textContent='';
-      drawOrderPreview();
+    } else if(target.form?.id==='caseInvoiceForm'&&target.name==='vendor'){
+      const {elements,dataset}=target.form;
+      if(dataset.autoNo&&elements.no.value===dataset.autoNo)elements.no.value='';
+      if(dataset.autoDate&&elements.date.value===dataset.autoDate)elements.date.value='';
     } else if(target.id==='caseExportKind'){
       byId('casePayDateLabel').hidden=target.value!=='hm';
     } else if (target.id === 'casePartnerCode') {
@@ -963,7 +1034,8 @@
       }
       return;
     }
-    if(b.dataset.orderCopy){action(()=>copyOrders(b.dataset.orderCopy));return;}
+    if(b.dataset.orderCopy){action(()=>copyOrders(b.dataset.orderCopy,b.dataset.channel));return;}
+    if(b.dataset.orderGmail){openVendorGmail(b.dataset.orderGmail);return;}
     if(b.dataset.docPage!==undefined){
       const page=Number(b.dataset.docPage);
       if(vendorPreview?.doc&&Number.isInteger(page)&&page>=0&&page*25<vendorPreview.doc.items.length){
@@ -1010,6 +1082,8 @@
     const handlers = {
       'cancel-doc':()=>{vendorPreview=null;renderVendorPreview();},
       'apply-pos-range':applyPosRange,
+      'pos-add-all':()=>setPosChoices('add','pos-add-all'),
+      'pos-skip-all':()=>setPosChoices('skip','pos-skip-all'),
       'clear-pos-file':()=>{clearPosFile();staged=null;renderPreview();status('已取消選檔。');},
       commit, cancel: () => { staged = null; renderPreview(); },
       prev: () => { filterPage--; renderList(); }, next: () => { filterPage++; renderList(); },
@@ -1035,8 +1109,6 @@
         renderSelection(lookupCount);
         if(showOrders)drawOrderPreview();
       },
-      'order-prev':()=>{if(orderPage>0){orderPage--;drawOrderPreview();}},
-      'order-next':()=>{if((orderPage+1)*orderSize<selectedMessages().length){orderPage++;drawOrderPreview();}},
     };
     const handler = handlers[b.dataset.caseAction] ||
       (Object.hasOwn(exports,b.dataset.caseAction)?()=>exports[b.dataset.caseAction](checkBills()):null);
@@ -1061,6 +1133,9 @@
       } else if (form.id === 'caseInvoiceForm') {
         Cases.attachInvoice(state, c, Object.fromEntries(f), f.has('replace'));
         status('已儲存發票。請勾選已核對並儲存。');
+      } else if (form.dataset?.invoiceCorrection) {
+        Cases.correctInvoice(state,c,form.dataset.invoiceCorrection,{no:f.get('no'),date:f.get('date')});
+        status('已儲存發票修正，原始辨識資料已保留。');
       } else if (form.dataset.bill) {
         const inv = state.invoices.find(i => i.key === form.dataset.bill);
         const link = inv.links.find(l => l.caseId === c.id);

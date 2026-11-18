@@ -260,3 +260,23 @@ button:not(:disabled), summary { cursor:pointer; }
   .erp-resize { height:34px; width:48px; }
 }
 .erp-items { max-height:10rem; overflow:auto; margin:.24rem 0; }
+
+.ui-icon { display:inline-block; width:1.15em; height:1.15em; flex:none; vertical-align:-.22em; }
+.nav .ui-icon,.case-btn .ui-icon,.case-upload .ui-icon { margin-inline-end:.22em; }
+.erp-mark { display:block; object-fit:contain; background:transparent; }
+.erp-resize .ui-icon { height:14px; width:19px; }
+.erp-system h1,.erp-system h2 { margin:0 0 .6rem; font-size:1.15rem; }
+.erp-info-nav { margin:.6rem 0; }
+.erp-info-nav [aria-current] { background:#e4efff; border-color:#8da7cc; }
+.erp-system a,.erp-channel a { text-decoration:none; }
+.erp-communications { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin-top:.4rem; }
+.erp-channel,.erp-channel label,.erp-recipient { display:grid; gap:.25rem; min-width:0; }
+.erp-recipient { width:min(100%,325px); font-size:.85rem; }
+.erp-channel label { font-size:.85rem; }
+.erp-channel > button { justify-self:start; }
+.erp-channel textarea { margin:0; min-height:7em; }
+.case-doc-preview .case-btn .ui-icon { margin:0; }
+@media(max-width:680px) { .erp-communications { grid-template-columns:minmax(0,1fr); gap:.75rem; } }
+@media(prefers-reduced-motion:reduce) {
+  .ui-icon,.productToast { transition:none; animation:none; }
+}

@@ -500,12 +500,12 @@ async function generateHuamao(){
       const salesNo=sales?.銷貨單號 || '';
       
       const note=[invoiceDate?`發票日期：${invoiceDate}`:'',salesNo?`銷貨單號：${salesNo}`:''].filter(Boolean).join('｜');
-      let result='✅ 成功';
-      if(!merchant){result='⚠ 略過：缺商家名稱'; skipped++;}
-      else if(!Object.keys(agg).length){result='⚠ 略過：沒有華茂出貨設備'; skipped++;}
-      else if(!requestNo){result='⚠ 成功但缺請款單號';}
-      if((result.startsWith('✅') || result.includes('成功但')) && salesRecords.length && !sales){result += '｜未對到銷貨單';}
-      if(result.startsWith('✅') || result.includes('成功但')){
+      let result='成功';
+      if(!merchant){result='略過：缺商家名稱'; skipped++;}
+      else if(!Object.keys(agg).length){result='略過：沒有華茂出貨設備'; skipped++;}
+      else if(!requestNo){result='成功但缺請款單號';}
+      if((result.startsWith('成功')) && salesRecords.length && !sales){result += '｜未對到銷貨單';}
+      if(result.startsWith('成功')){
         if(sales) usedSales.add(salesRecordKey(sales));
         if(unknownCost.length) result+='｜採購價未設定，金額留白待確認';
         output.push({'預計撥款日':'','請款單號':requestNo,'發票號碼':invoiceNo,'發票日期':invoiceDate,'說明':desc,'金額':amount,'已請款':'','已撥款':'','對帳單':'','備註':note});
@@ -530,8 +530,8 @@ async function generateHuamao(){
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(logLines.map(x=>[x])),'處理紀錄');
     XLSX.writeFile(wb,`華茂款項匯入資訊_v14_1_${formatToday()}.xlsx`);
     if(lastProcessedRow) saveLastRow(lastProcessedRow);
-    const warnings=process.filter(r=>r['結果']!=='✅ 成功').length;
-    document.getElementById('hmStatus').innerHTML=`<div class="${warnings?'warn':'ok'}">生成完成：掃描 ${rows.length} 列，輸出 ${output.length} 筆，略過 ${skipped} 筆；${warnings} 筆含提醒，請核對「處理清單」。</div>`;
+    const warnings=process.filter(r=>r['結果']!=='成功').length;
+    document.getElementById('hmStatus').innerHTML=`<div class="${warnings?'warn':'ok'}">${uiIcon(warnings?'triangle-alert':'circle-check')} 生成完成：掃描 ${rows.length} 列，輸出 ${output.length} 筆，略過 ${skipped} 筆；${warnings} 筆含提醒，請核對「處理清單」。</div>`;
   }catch(err){console.error(err);log('錯誤：'+(err.stack||err.message));document.getElementById('hmStatus').innerHTML='<div class="warn">'+escapeHtml(err.message||err)+'</div>';}
 }
 function buildInvoiceRequestIndex(rows){const map=new Map();for(const row of rows){const requestNo=cleanRequestNo(findVal(row,['請款單號','請款單編號']));if(!requestNo)continue;const one=parseInvoiceRows([row]).parsed[0]||null;if(map.has(normalizeRequestNo(requestNo))) throw new Error(`請款單號 ${requestNo} 重複，請先確認重複來源，避免覆寫金額。`);map.set(normalizeRequestNo(requestNo),{row,requestNo,items:one?one.items:[],merchant:one?one.merchant:'',memo:clean(findVal(row,['摘要說明','備註','摘要']))});}return map;}
@@ -817,6 +817,44 @@ ${bodyItems}
 function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
+function uiIcon(name) {
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.7#${name}"></use></svg>`;
+}
+const sessionRecipients=new Map();
+const recipientKey=vendor=>'posEquipment.orders.to.'+vendor;
+function vendorRecipient(vendor) {
+  if(sessionRecipients.has(vendor))return sessionRecipients.get(vendor);
+  try{return localStorage.getItem(recipientKey(vendor))||'';}catch{return '';}
+}
+function validRecipients(input) {
+  if(!String(input||'').trim())return '';
+  const addresses=String(input).split(/[,;]/).map(address=>address.trim());
+  if(String(input).length>512||addresses.some(address=>address.length>254||
+    !/^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+$/i.test(address)))
+    throw Error('請輸入有效的廠商信箱，多個信箱以逗號分隔。');
+  return [...new Set(addresses)].join(',');
+}
+function saveVendorRecipient(vendor,input) {
+  const value=validRecipients(input);
+  sessionRecipients.set(vendor,value);
+  try{localStorage.setItem(recipientKey(vendor),value);return true;}catch{return false;}
+}
+function vendorCommunication(vendor,messages) {
+  if(!messages.length)return {subject:'',body:'',line:''};
+  const subject=messages.length===1?messages[0].subject:`【順立智慧 x ${vendor}】設備採購 ${messages.length} 筆`;
+  const body=messages.length===1?messages[0].emailBody:messages.map(m=>[m.subject,m.emailBody].join('\n\n')).join('\n\n────────\n\n');
+  return {subject,body,line:messages.map(m=>m.lineMessage).join('\n\n')};
+}
+function gmailComposeUrl(recipient,subject,body) {
+  const url=new URL('https://mail.google.com/mail/u/0/');
+  const to=validRecipients(recipient);
+  if(to)url.searchParams.set('to',to);
+  url.searchParams.set('su',subject);
+  url.searchParams.set('body',body);
+  url.searchParams.set('tf','cm');
+  if(url.href.length>8000)throw Error('信件內容較長，請複製主旨與內文，再手動開啟 Gmail 貼上。');
+  return url.href;
+}
 let vendorResultRows=[], vendorResultPage=0;
 function pagerHtml(scope,page,size,total){
   const pages=Math.ceil(total/size);
@@ -847,7 +885,7 @@ function renderVendorGroups(results,page=0){
         <div>
           <label class="small">LINE 群組格式</label>
           <textarea class="textOutput" readonly id="vendorLine_${i}">${escapeHtml(r.lineMessage)}</textarea>
-          <div class="vendorActions"><button type="button" class="miniBtn" data-copy-vendor="vendorLine_${i}">🌸 複製 LINE</button></div>
+          <div class="vendorActions"><button type="button" class="miniBtn" data-copy-vendor="vendorLine_${i}">${uiIcon('copy')} 複製 LINE</button></div>
         </div>
         <div>
           <label class="small">Email 主旨</label>
@@ -1319,17 +1357,20 @@ function initTableGrip(grip,table) {
 function showErpView() {
   const hash=window.location.hash.slice(1);
   const direct=['hm','invoice','vendorMsg'];
-  const pages=['caseWorkspace','legacyWorkflows','ar','logPanel','rules'];
-  const view=direct.includes(hash)?'legacyWorkflows':pages.includes(hash)?hash:'caseWorkspace';
+  const info=['logPanel','rules','helpPanel'];
+  const pages=['caseWorkspace','legacyWorkflows','ar','systemInfo'];
+  const view=direct.includes(hash)?'legacyWorkflows':info.includes(hash)?'systemInfo':pages.includes(hash)?hash:'caseWorkspace';
   const show=(id,on)=>{const node=document.getElementById(id);if(node)node.hidden=!on;};
-  for(const id of ['caseWorkspace','logPanel','rules'])show(id,view===id);
+  for(const id of ['caseWorkspace','systemInfo'])show(id,view===id);
+  const infoPage=info.includes(hash)?hash:'logPanel';
+  for(const id of info)show(id,view==='systemInfo'&&infoPage===id);
   show('legacyWorkflows',view==='legacyWorkflows'||view==='ar');
   show('arDashboard',view==='ar');
   show('ar',view==='ar');
   for(const id of direct)show(id,view==='legacyWorkflows');
-  for(const link of document.querySelectorAll('[data-erp-view]')){
-    if(!link.dataset?.erpView)continue;
-    if(link.dataset.erpView===view)link.setAttribute('aria-current','page');
+  for(const link of document.querySelectorAll('[data-erp-view],[data-info-page]')){
+    if(!link.dataset?.erpView&&!link.dataset?.infoPage)continue;
+    if(link.dataset.erpView===view||link.dataset.infoPage===infoPage)link.setAttribute('aria-current','page');
     else link.removeAttribute('aria-current');
   }
   if(hash==='caseSapDatabase'){

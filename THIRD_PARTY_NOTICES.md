@@ -186,3 +186,5 @@ Exact component sources, versions, sizes and SHA-256 checksums are in `docs/DEPE
     FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
     DEALINGS IN THE FONT SOFTWARE.
 
+
+靜態操作圖示採用 CityPulso PulsoIcon Core 6.2.0 的 SVG 圖形子集，保留原有開源授權及上游第三方聲明。重新產出可使用 `tests/build_pulso_icons.py` 搭配 npm 發行壓縮檔。[PulsoIcon 原始碼](https://github.com/CityPulso/PulsoIcon-Package) · [授權](vendor/pulso-icons.LICENSE)

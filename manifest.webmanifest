@@ -3,18 +3,20 @@
   "short_name": "請款助手",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#fff7fb",
-  "theme_color": "#ef3e86",
+  "background_color": "#f0f4f9",
+  "theme_color": "#172943",
   "icons": [
     {
-      "src": "icon-192.png",
+      "src": "brand/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "icon-512.png",
+      "src": "brand/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
   "scope": "./"
