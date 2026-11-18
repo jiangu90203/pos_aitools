@@ -196,7 +196,6 @@ button:not(:disabled), summary { cursor:pointer; }
 .erp-batch-list { list-style:none; margin:.4rem 0 0; padding:0; }
 .erp-batch-list li { padding:.38rem .15rem; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.35rem .65rem; }
 .erp-batch-list li > div:first-child { display:flex; flex-wrap:wrap; gap:.12rem .6rem; overflow-wrap:anywhere; min-width:0; }
-.erp-batch-confirm { margin:.4rem 0 0; padding:.45rem .55rem; background:#fff; border:1px solid var(--line); border-radius:6px; }
 .erp-drawer { position:fixed; inset:0 0 0 auto; width:min(640px,100%); z-index:10; margin:0; padding:14px; overflow:auto; overscroll-behavior:contain; border-radius:0; box-shadow:-12px 0 32px #152a4533; }
 .erp-drawer > .case-detail-top:first-child { position:sticky; top:-14px; z-index:3; background:#fff; border-bottom:1px solid var(--line); padding:.45rem 0; }
 .erp-drawer .case-table { min-width:560px; }
@@ -270,8 +269,7 @@ button:not(:disabled), summary { cursor:pointer; }
 .erp-info-nav [aria-current] { background:#e4efff; border-color:#8da7cc; }
 .erp-system a,.erp-channel a { text-decoration:none; }
 .erp-communications { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin-top:.4rem; }
-.erp-channel,.erp-channel label,.erp-recipient { display:grid; gap:.25rem; min-width:0; }
-.erp-recipient { width:min(100%,325px); font-size:.85rem; }
+.erp-channel,.erp-channel label { display:grid; gap:.25rem; min-width:0; }
 .erp-channel label { font-size:.85rem; }
 .erp-channel > button { justify-self:start; }
 .erp-channel textarea { margin:0; min-height:7em; }
@@ -280,3 +278,7 @@ button:not(:disabled), summary { cursor:pointer; }
 @media(prefers-reduced-motion:reduce) {
   .ui-icon,.productToast { transition:none; animation:none; }
 }
+.erp-order-contacts { margin:.4rem 0; display:grid; gap:.2rem; font-size:.85rem; }
+.erp-order-contacts div { display:grid; grid-template-columns:2.25rem minmax(0,1fr); gap:.25rem; }
+.erp-order-contacts dt { font-weight:700; }
+.erp-order-contacts dd { margin:0; overflow-wrap:anywhere; }

@@ -293,13 +293,13 @@ const Cases = (() => {
         const p=order.pos, base=[p.row,p.shopId,p.quote,p.merchant,d.vendor,d.kind,doc.id,d.name];
         const invoice=VendorDocs.invoiceFields(state,order,doc,byCase.get(order.id));
         files.push([...base,doc.shipNo,doc.shipDate,invoice.no,invoice.date,doc.orderNo,
-          doc.buyer,doc.recipient,doc.net,doc.tax,doc.gross,doc.warnings.join('；')]);
+          doc.buyer,doc.shipCompany||doc.recipient,doc.net,doc.tax,doc.gross,doc.warnings.join('；'),VendorDocs.pageLabel(doc.pages)]);
         for(const i of doc.items) items.push([...base,i.code,i.name,i.unit,i.quantity,i.unitPrice,i.net,i.gross,i.raw]);
       }
     }
     if(!files.length)return;
     addSheet(book,'廠商文件',[...header,'銷貨／出貨單號','出貨日期','發票號碼','發票日期','廠商訂單單號',
-      '帳款客戶','收件／轉寄資訊','未稅','稅額','含稅','待核對'],files);
+      '帳款客戶','收件／轉寄資訊','未稅','稅額','含稅','待核對','來源頁碼'],files);
     addSheet(book,'廠商品項',[...header,'產品編號','品名／規格','單位','數量','單價','未稅','含稅','原始品項文字'],items);
   }
   function huamaoWorkbook(state, orders, payDate) {
@@ -314,8 +314,12 @@ const Cases = (() => {
       if (!entries.length) {
         const hw = p.devices.filter(d => vendorForItem(d.item) === '華茂' && d.qty > 0);
         const estimated = hw.every(d => Object.hasOwn(COST, d.item)) ? hw.reduce((sum, d) => sum + d.qty * COST[d.item][0], 0) : null;
-        rows.push([meta.payDate || payDate, '', '', '', desc(order, '華茂'), estimated, null, meta.paid ?? null,
-          meta.statement || '', estimated === null ? '待補發票與採購金額' : '暫估金額，待補發票核對']);
+        const shipments=typeof VendorDocs==='undefined'?[]:VendorDocs.documents(order).filter(d=>
+          d.vendor==='華茂'&&d.kind==='銷貨單'&&d.parsed.invoiceNo&&d.parsed.invoiceDate);
+        const doc=shipments.length===1?shipments[0].parsed:null;
+        rows.push([meta.payDate || payDate, '', doc?.invoiceNo||'', doc?.invoiceDate||'', desc(order, '華茂'), estimated, null, meta.paid ?? null,
+          meta.statement || '',doc?'發票欄位取自銷貨單'+(doc.shipNo?' '+doc.shipNo:'')+'，金額依 POS 採購規則':
+            estimated === null ? '待補發票與採購金額' : '暫估金額，待補發票核對']);
         continue;
       }
       for (const {inv, link} of entries) {

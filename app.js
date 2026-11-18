@@ -170,27 +170,34 @@ async function parseSalesPdfFiles(files){
   }
   return out;
 }
-function matchSalesRecord(merchant, salesRecords, amount=0, usedSet=null){
-  const m=normalizeMerchantName(merchant);
-  if(!m) return null;
-  let best=null, score=0, tied=false;
-  for(const r of salesRecords||[]){
-    const key=`${r.檔名}#${r.頁碼}#${r.發票號碼}#${r.銷貨單號}`;
-    if(usedSet && usedSet.has(key)) continue;
-    const names=[r.公司名稱,r.客戶名稱].filter(Boolean);
-    let s=0;
-    for(const n of names){const nn=normalizeMerchantName(n); if(!nn) continue; if(nn===m) s=Math.max(s,100); else if(nn.includes(m)||m.includes(nn)) s=Math.max(s,80);}
-    const a=num(amount), t=num(r.總計);
-    if(s>=80 && a>0 && t>0){
-      if(a===t) s+=40;
-      else if(Math.abs(a-t)<=5) s+=25;
-      else s-=10;
-    }
-    if(s>score){best=r; score=s; tied=false;} else if(s===score && s>=80){tied=true;}
-  }
-  return score>=80 && !tied ? best : null;
+function salesRecordScore(merchant, record, amount=0, strict=false){
+  const name=normalizeMerchantName(merchant);
+  if(!name)return 0;
+  const names=[record.公司名稱,record.客戶名稱].map(normalizeMerchantName).filter(Boolean);
+  const full=names.includes(name);
+  const partial=names.some(n=>(!strict||Math.min(n.length,name.length)>=2)&&(n.includes(name)||name.includes(n)));
+  if(!full&&!partial)return 0;
+  const expected=num(amount), total=num(record.總計);
+  const delta=expected>0&&total>0?Math.abs(expected-total):null;
+  if(strict&&(delta!==null&&delta>5||!full&&delta===null))return 0;
+  return (full?(strict?200:100):80)+(delta===null?0:delta===0?40:delta<=5?25:-10);
 }
-function salesRecordKey(r){return r ? `${r.檔名}#${r.頁碼}#${r.發票號碼}#${r.銷貨單號}` : '';}
+function matchSalesRecord(merchant, salesRecords, amount=0, usedSet=null,strict=false){
+  let best=null, score=0, tied=false;
+  for(const record of salesRecords||[]){
+    if(usedSet?.has(salesRecordKey(record)))continue;
+    const rank=salesRecordScore(merchant,record,amount,strict);
+    if(rank>score){best=record;score=rank;tied=false;}
+    else if(rank===score&&rank>=80)tied=true;
+  }
+  return score>=80&&!tied?best:null;
+}
+function salesRecordKey(r){
+  if(!r)return '';
+  if(r.銷貨單號)return 'sale:'+r.銷貨單號;
+  if(r.發票號碼)return 'invoice:'+r.發票號碼.toUpperCase();
+  return `${r.檔名}#${r.頁碼}`;
+}
 function uniqueHeaders(rawHeaders){
   const seen=Object.create(null);
   return rawHeaders.map(h=>{
@@ -494,7 +501,7 @@ async function generateHuamao(){
       const desc=hmDescription(agg, merchant);
       const unknownCost=Object.keys(agg).filter(item=>!Object.hasOwn(COST,item));
       const amount=unknownCost.length?'':hmAmount(agg);
-      const sales=matchSalesRecord(merchant, salesRecords, amount, usedSales);
+      const sales=matchSalesRecord(merchant, salesRecords, amount, usedSales,true);
       const invoiceNo=sales?.發票號碼 || '';
       const invoiceDate=sales?.發票日期 || '';
       const salesNo=sales?.銷貨單號 || '';
@@ -818,13 +825,16 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.7#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.8#${name}"></use></svg>`;
 }
-const sessionRecipients=new Map();
-const recipientKey=vendor=>'posEquipment.orders.to.'+vendor;
-function vendorRecipient(vendor) {
-  if(sessionRecipients.has(vendor))return sessionRecipients.get(vendor);
-  try{return localStorage.getItem(recipientKey(vendor))||'';}catch{return '';}
+// Central contact directory for supplier orders. All values are static deployment settings.
+const VENDOR_ORDER_CONTACTS = {
+  華茂: {to:[['','elita.lin@bestpride.com.tw']], cc:[['','sales@bestpride.com.tw'],['','support@cyberbiz.io']]},
+  拍檔: {to:[['Jed Lee','jed.lee@partner.com.tw'],['Karen Chang','karen.chang@partner.com.tw']],
+    cc:[['','support@cyberbiz.io'],['Hannah Kuo','hannah.kuo@cyberbiz.io']]}
+};
+function vendorRecipients(vendor) {
+  return Object.hasOwn(VENDOR_ORDER_CONTACTS,vendor)?VENDOR_ORDER_CONTACTS[vendor]:{to:[],cc:[]};
 }
 function validRecipients(input) {
   if(!String(input||'').trim())return '';
@@ -834,21 +844,18 @@ function validRecipients(input) {
     throw Error('請輸入有效的廠商信箱，多個信箱以逗號分隔。');
   return [...new Set(addresses)].join(',');
 }
-function saveVendorRecipient(vendor,input) {
-  const value=validRecipients(input);
-  sessionRecipients.set(vendor,value);
-  try{localStorage.setItem(recipientKey(vendor),value);return true;}catch{return false;}
-}
 function vendorCommunication(vendor,messages) {
   if(!messages.length)return {subject:'',body:'',line:''};
   const subject=messages.length===1?messages[0].subject:`【順立智慧 x ${vendor}】設備採購 ${messages.length} 筆`;
   const body=messages.length===1?messages[0].emailBody:messages.map(m=>[m.subject,m.emailBody].join('\n\n')).join('\n\n────────\n\n');
   return {subject,body,line:messages.map(m=>m.lineMessage).join('\n\n')};
 }
-function gmailComposeUrl(recipient,subject,body) {
+function gmailComposeUrl(recipient,subject,body,copyTo='') {
   const url=new URL('https://mail.google.com/mail/u/0/');
   const to=validRecipients(recipient);
+  const cc=validRecipients(copyTo);
   if(to)url.searchParams.set('to',to);
+  if(cc)url.searchParams.set('cc',cc);
   url.searchParams.set('su',subject);
   url.searchParams.set('body',body);
   url.searchParams.set('tf','cm');

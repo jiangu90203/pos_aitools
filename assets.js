@@ -1,6 +1,6 @@
 /* Same-release, same-origin URLs for scripts, workers and optional dependencies. */
 const SiteAssets = (() => {
-  const release = '15.7';
+  const release = '15.8';
   const pending = new Map();
 
   function url(path) {
