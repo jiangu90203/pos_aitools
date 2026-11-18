@@ -1260,13 +1260,89 @@ function pdfAsset(kind,name){
 class LocalCMapReaderFactory{async fetch({name}){return {cMapData:pdfAsset('cmaps',name+'.bcmap'),compressionType:1};}}
 class LocalStandardFontDataFactory{async fetch({filename}){return pdfAsset('fonts',filename);}}
 
-if(typeof document!=='undefined')document.addEventListener?.('input', event=>{
-  const input=event.target;
-  const isWidth=input.hasAttribute?.('data-table-width');
-  if(!isWidth&&!input.hasAttribute?.('data-table-height'))return;
-  const table=document.getElementById(input.getAttribute('aria-controls'));
-  const value=input.valueAsNumber;
-  if(table&&Number.isFinite(value)){
-    table.style.setProperty(isWidth?'--table-width':'--table-max-height',value+(isWidth?'%':'px'));
+function initTableGrip(grip,table) {
+  const key='posEquipment.tableHeight.'+table.id;
+  const clamp=n=>Math.min(760,Math.max(160,Math.round(n)));
+  const setHeight=(n,persist=false)=>{
+    const height=clamp(n);
+    table.style.setProperty('--erp-table-height',height+'px');
+    if(persist)try{localStorage.setItem(key,String(height));}catch{}
+  };
+  try{
+    const stored=Number(localStorage.getItem(key));
+    if(stored>=160&&stored<=760)setHeight(stored);
+  }catch{}
+  let drag=null, frame=0, suppressClick=false;
+  grip.addEventListener('pointerdown',event=>{
+    if(event.button!==0||drag)return;
+    suppressClick=false;
+    grip.setPointerCapture(event.pointerId);
+    drag={id:event.pointerId,y:event.clientY,height:table.offsetHeight,next:table.offsetHeight,moved:false};
+  });
+  grip.addEventListener('pointermove',event=>{
+    if(drag?.id!==event.pointerId)return;
+    const delta=event.clientY-drag.y;
+    if(!drag.moved&&Math.abs(delta)<3)return;
+    drag.moved=true;
+    drag.next=drag.height+delta;
+    if(!frame)frame=requestAnimationFrame(()=>{
+      frame=0;
+      if(drag)setHeight(drag.next);
+    });
+  });
+  const finish=event=>{
+    if(drag?.id!==event.pointerId)return;
+    if(frame){cancelAnimationFrame(frame);frame=0;}
+    suppressClick=drag.moved;
+    if(drag.moved)setHeight(drag.next,true);
+    drag=null;
+  };
+  grip.addEventListener('pointerup',finish);
+  grip.addEventListener('pointercancel',finish);
+  grip.addEventListener('lostpointercapture',finish);
+  grip.addEventListener('keydown',event=>{
+    if(!['ArrowUp','ArrowDown','Home'].includes(event.key))return;
+    event.preventDefault();
+    if(event.key==='Home'){
+      table.style.removeProperty('--erp-table-height');
+      try{localStorage.removeItem(key);}catch{}
+    } else setHeight(table.offsetHeight+(event.key==='ArrowDown'?32:-32),true);
+  });
+  // A tap or keyboard activation cycles sizes without requiring a drag.
+  grip.addEventListener('click',event=>{
+    if(suppressClick&&event.detail){suppressClick=false;return;}
+    const h=table.offsetHeight;
+    setHeight(h<320?360:h<510?560:240,true);
+  });
+}
+
+function showErpView() {
+  const hash=window.location.hash.slice(1);
+  const direct=['hm','invoice','vendorMsg'];
+  const pages=['caseWorkspace','legacyWorkflows','ar','logPanel','rules'];
+  const view=direct.includes(hash)?'legacyWorkflows':pages.includes(hash)?hash:'caseWorkspace';
+  const show=(id,on)=>{const node=document.getElementById(id);if(node)node.hidden=!on;};
+  for(const id of ['caseWorkspace','logPanel','rules'])show(id,view===id);
+  show('legacyWorkflows',view==='legacyWorkflows'||view==='ar');
+  show('arDashboard',view==='ar');
+  show('ar',view==='ar');
+  for(const id of direct)show(id,view==='legacyWorkflows');
+  for(const link of document.querySelectorAll('[data-erp-view]')){
+    if(!link.dataset?.erpView)continue;
+    if(link.dataset.erpView===view)link.setAttribute('aria-current','page');
+    else link.removeAttribute('aria-current');
   }
-});
+  if(hash==='caseSapDatabase'){
+    const sources=document.getElementById(hash)?.closest('details');
+    if(sources)sources.open=true;
+  }
+}
+
+if(typeof document!=='undefined'&&typeof window!=='undefined'&&window.location){
+  showErpView();
+  window.addEventListener('hashchange',showErpView);
+  for(const [gripId,tableId] of [['caseTableGrip','caseTableViewport'],['arTableGrip','arQueryResult']]){
+    const table=document.getElementById(tableId);
+    if(table?.style)initTableGrip(document.getElementById(gripId),table);
+  }
+}

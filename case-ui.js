@@ -9,11 +9,13 @@
   let state = Cases.create();
   let current = '', staged = null, filterPage = 0, busy = false, dirty = false, stageToken = 0;
   let posImport = null, vendorPreview = null;
+  let batchItems=[], batchView='', batchPage=0, batchEditing=-1, batchAffected=new Set();
+  let showOrders=false, detailOpener=null;
   const pageSize = 30, previewSize = 20, orderSize = 12;
   let quoteUrl='', orderFrame=0, orderPage=0, orderDirty=true, orderMessages=[];
   let caseIndex = new Map(), indexedCases, billsByCase = new Map(), visibleCases = [], filterFrame = 0;
+  let stageByCase = new Map();
   const order = () => caseIndex.get(current)?.record;
-  const partnerEntries = id => billsByCase.get(id) || [];
   function indexCases() {
     if(indexedCases===state.cases)return;
     indexedCases=state.cases;
@@ -25,8 +27,8 @@
   }
   function indexBills() {
     billsByCase=new Map();
+    stageByCase=new Map();
     for(const inv of state.invoices){
-      if(inv.vendor!=='拍檔')continue;
       for(const link of inv.links){
         if(!billsByCase.has(link.caseId))billsByCase.set(link.caseId,[]);
         billsByCase.get(link.caseId).push({inv,link});
@@ -68,10 +70,162 @@
     try { await fn(); } catch (err) { status(err.message || '操作失敗，請檢查資料。', true); }
     finally { busy = false; byId('caseBusy').hidden = true; }
   }
+  function billFlags(c,vendor) {
+    if(c.pos.issues.length||c.review)return ['待核對設備'];
+    let stages=stageByCase.get(c.id);
+    if(!stages){
+      stages=new Map();
+      stageByCase.set(c.id,stages);
+    }
+    return caseIndex.get(c.id).vendors.flatMap(v=>{
+      if(vendor&&vendor!==v)return [];
+      if(stages.has(v))return stages.get(v);
+      const entries=(billsByCase.get(c.id)||[]).filter(x=>x.inv.vendor===v);
+      const flags=entries.length?entries.map(({inv,link})=>Cases.billStatus(c,inv,link,entries)):['待補'+v+'發票'];
+      stages.set(v,flags);
+      return flags;
+    });
+  }
+  function documentFlag(c,vendor) {
+    if(batchAffected.has(vendor+':'+c.id))return 'review';
+    const docs=VendorDocs.documents(c).filter(d=>!vendor||d.vendor===vendor);
+    if(docs.some(d=>d.parsed.warnings.length))return 'review';
+    const suppliers=caseIndex.get(c.id).vendors.filter(v=>!vendor||vendor===v);
+    if(!suppliers.length)return '';
+    return suppliers.every(v=>VendorDocs.kinds.every(k=>docs.some(d=>d.vendor===v&&d.kind===k)))?'complete':'missing';
+  }
+  const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,0));
+  const awaitingMatch=()=>batchItems.filter(item=>item.type==='review'&&item.doc?.key);
+  function batchCandidates(item, query='') {
+    const q=norm(query), matches=new Set([...item.matches,...item.previous]);
+    const eligible=[...caseIndex.values()].filter(meta=>meta.vendors.includes(item.doc.vendor)&&
+      (!q||meta.search.some(s=>s.includes(q))||String(meta.record.pos.row)===q));
+    const suggested=eligible.filter(meta=>matches.has(meta.record.id));
+    return [...suggested,...eligible.filter(meta=>!matches.has(meta.record.id))].slice(0,50);
+  }
+  function batchOptions(item, query='') {
+    return option('','請選擇案件','')+batchCandidates(item,query)
+      .map(({record:c})=>option(c.id,labelFor(c),query?'':item.caseId||item.previous[0])).join('');
+  }
+  function renderBatch(){
+    batchAffected=new Set();
+    const counts={linked:0,review:0,failed:0,ignored:0};
+    for(const item of batchItems){
+      counts[item.type]++;
+      if(item.type==='review'&&item.doc)for(const id of new Set([...item.matches,...item.previous])){
+        batchAffected.add(item.doc.vendor+':'+id);
+        batchAffected.add(':'+id);
+      }
+    }
+    const node=byId('caseBatchResults');
+    node.hidden=!batchItems.length;
+    if(node.hidden){node.innerHTML='';return;}
+    const items=batchItems.filter(item=>item.type===batchView);
+    const last=Math.max(0,Math.ceil(items.length/orderSize)-1);
+    batchPage=Math.max(0,Math.min(batchPage,last));
+    const slice=items.slice(batchPage*orderSize,(batchPage+1)*orderSize);
+    const active=batchItems.find(item=>item.index===batchEditing&&item.type==='review');
+    node.innerHTML=`<div class="erp-batch-summary">
+      <strong role="status">成功關聯 ${counts.linked} 筆｜需確認 ${counts.review} 筆｜失敗 ${counts.failed} 筆${counts.ignored?'｜已略過 '+counts.ignored+' 筆':''}</strong>
+      ${Object.entries({review:'查看需確認項目',failed:'查看失敗原因',linked:'查看已關聯'}).map(([key,label])=>
+        `<button type="button" class="case-btn" aria-pressed="${batchView===key}" data-batch-view="${key}" ${counts[key]?'':'disabled'}>${label}</button>`).join('')}
+      ${awaitingMatch().length?'<button type="button" class="case-btn" data-case-action="retry-batch">重新比對</button>':''}
+    </div>
+    ${slice.length?`<ul class="erp-batch-list">${slice.map(item=>`<li>
+      <div><strong>${e(item.name)}</strong>
+      <span>${e(item.doc?[item.doc.vendor,item.doc.kind,item.doc.id].filter(Boolean).join(' · '):'')}</span>
+      ${item.reason?`<span class="case-warning">${e(item.reason)}</span>`:''}
+      ${item.type==='linked'?'<span>'+e(caseIndex.get(item.caseId)?.record?labelFor(caseIndex.get(item.caseId).record):'')+'</span>':''}</div>
+      ${item.type==='review'?`<div class="case-actions">${item.doc?.key?`<button type="button" class="case-btn" data-batch-open="${item.index}">核對</button>`:''}
+        <button type="button" class="case-btn" data-batch-ignore="${item.index}">略過</button></div>`:''}
+    </li>`).join('')}</ul>`:''}
+    ${last?`<div class="case-pagination">
+      <button type="button" class="case-btn" data-batch-page="-1" ${batchPage?'':'disabled'}>上一頁</button>
+      <span>${batchPage+1} ／ ${last+1} 頁</span>
+      <button type="button" class="case-btn" data-batch-page="1" ${batchPage===last?'disabled':''}>下一頁</button></div>`:''}
+    ${active?`<form id="caseBatchConfirm" class="erp-batch-confirm" data-batch-index="${active.index}">
+      <div class="case-detail-top"><strong>${e(active.doc.vendor+' '+active.doc.kind+' '+active.doc.id)}</strong>
+        <button type="button" class="case-btn" data-case-action="close-batch">關閉</button></div>
+      <p class="case-warning">${e(active.reason)}</p>
+      <p>${e([active.doc.shipCompany||active.doc.recipient,active.doc.invoiceDate||active.doc.shipDate,
+        active.doc.invoiceNo,active.doc.shipNo].filter(Boolean).join(' ｜ '))} ｜ 未稅 ${money(active.doc.net)} ｜ 稅額 ${money(active.doc.tax)} ｜ 含稅 ${money(active.doc.gross)}</p>
+      <div class="case-fields">
+        <label>查找同廠商案件<input id="caseBatchSearch" placeholder="報價單號、公司、來源列或 SHOP ID"></label>
+        <label>關聯案件<select required id="caseBatchCase" name="caseId">${batchOptions(active)}</select></label>
+      </div>
+      ${active.previous.length?`<label class="case-tick"><input name="replace" type="checkbox">確認替換此案件的同單號文件</label>`:''}
+      ${active.doc.items.length?`<details><summary>查看辨識品項（${active.doc.items.length} 筆）</summary><ul class="erp-items">
+        ${active.doc.items.map(item=>`<li>${e(item.name)} × ${e(item.quantity)} ｜ 未稅 ${money(item.net)}</li>`).join('')}</ul></details>`:''}
+      ${active.doc.invoiceReady?`<label class="case-tick"><input name="linkInvoice" type="checkbox" ${active.reason.includes('衝突')?'':'checked'}>同時帶入待核對發票欄位</label>`:''}
+      <button type="submit" class="case-btn primary">確認關聯</button>
+    </form>`:''}`;
+  }
+  async function applyBatch(items) {
+    const plan=VendorDocs.planBatch(state,items.map(item=>item.doc));
+    let count=0, sliceStart=performance.now();
+    for(let i=0;i<items.length;i++){
+      const item=items[i], decision=plan[i];
+      Object.assign(item,decision);
+      if(item.type!=='ready')continue;
+      try{
+        VendorDocs.save(state,caseIndex.get(item.caseId).record,item.doc,'',item.doc.invoiceReady);
+        item.type='linked';
+        count++;
+      }catch(err){
+        item.type='review';
+        item.reason=err.message;
+      }
+      if(performance.now()-sliceStart>12){
+        await yieldUI();
+        sliceStart=performance.now();
+      }
+    }
+    if(count)changed();
+    batchEditing=-1;
+    renderBatch();
+    render();
+    status(items.length?`已處理 ${items.length} 份可讀文件，本次關聯 ${count} 份。發票資料請在案件詳情核對。`:'沒有可解析的文件，請查看失敗原因。',!items.length);
+  }
+  async function runBatch(files) {
+    if(!files.length)return;
+    if(!state.cases.length)throw Error('請先載入工作檔，或匯入 POS 設備即時庫存以建立案件。');
+    const items=[];
+    batchView=''; batchPage=0; batchEditing=-1;
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      status(`讀取文件 ${i+1} ／ ${files.length}`);
+      await yieldUI();
+      const item={name:file.name,index:batchItems.length};
+      try {
+        item.doc=await VendorDocs.read(file);
+        items.push(item);
+      } catch(err){
+        item.type=err.code==='VENDOR_DOC_REVIEW'?'review':'failed';
+        item.reason=err.message||'無法讀取 PDF。';
+      }
+      batchItems.push(item);
+    }
+    await applyBatch([...awaitingMatch(),...items]);
+  }
+  function resolveBatch(form) {
+    const item=batchItems[Number(form.dataset.batchIndex)];
+    const fields=new FormData(form), c=caseIndex.get(fields.get('caseId'))?.record;
+    if(item?.type!=='review'||!c)throw Error('請選擇要關聯的案件。');
+    if(item.previous.length&&!fields.has('replace'))throw Error('同單號文件已保存，請確認是否替換。');
+    VendorDocs.save(state,c,item.doc,fields.has('replace')?item.doc.key:'',fields.has('linkInvoice'));
+    item.type='linked';
+    item.caseId=c.id;
+    item.reason='';
+    batchEditing=-1;
+    renderBatch();
+    changed();render();
+    status('已完成文件關聯。');
+  }
   function lookup() {
     const query = norm(byId('caseSearch').value);
     const vendor = byId('caseVendor').value;
     const mode = byId('caseStateFilter').value;
+    const documents = byId('caseDocumentFilter').value;
     const first = Number(byId('caseFirstRow').value) || 0;
     const last = Number(byId('caseLastRow').value) || Infinity;
     return state.cases.filter(c => {
@@ -79,9 +233,14 @@
       const meta=caseIndex.get(c.id);
       if(query&&!meta.search.some(v=>v.includes(query)))return false;
       if(vendor&&!meta.vendors.includes(vendor))return false;
-      if (mode === 'selected') return selected.has(c.id);
-      if (mode === 'check') return c.review || c.pos.issues.length > 0 ||
-        (meta.vendors.includes('拍檔') && !partnerEntries(c.id).some(x => x.link.confirmed));
+      if(documents&&documentFlag(c,vendor)!==documents)return false;
+      if(mode==='selected')return selected.has(c.id);
+      if(mode){
+        const flags=billFlags(c,vendor);
+        if(mode==='ready')return flags.includes('可填請款');
+        if(mode==='claimed')return flags.includes('已回填請款');
+        if(mode==='check')return flags.some(flag=>!['可填請款','已回填請款'].includes(flag));
+      }
       return true;
     });
   }
@@ -98,21 +257,26 @@
       const p = c.pos;
       const meta=caseIndex.get(c.id);
       const tags=meta.vendors.join('／')||'其他';
-      const entries=partnerEntries(c.id);
-      const flags = p.issues.length || c.review ? '待核對設備' :
-        entries.length ? [...new Set(entries.map(({inv, link}) => Cases.billStatus(c, inv, link, entries)))].join('／') :
-        meta.vendors.includes('拍檔') ? '待補拍檔發票' : '—';
+      const vendor=byId('caseVendor').value;
+      const flags=[...new Set(billFlags(c,vendor))].join('／')||'—';
+      const docFlag=documentFlag(c,vendor);
       return `<tr data-case-row="${e(c.id)}"${c.id === current ? ' class="case-active"' : ''}>
         <td><input type="checkbox" data-select="${e(c.id)}" aria-label="勾選 ${e(labelFor(c))}" ${selected.has(c.id) ? 'checked' : ''}></td>
         <td>${p.row}</td><td>${e(p.quote || '—')}</td><td>${e(p.merchant || '—')}</td>
         <td>${e(tags)}</td><td>${e(flags)}</td>
+        <td><span class="erp-badge ${docFlag}">${({complete:'齊全',missing:'缺文件',review:'待確認'})[docFlag]||'—'}</span></td>
         <td><button type="button" class="case-btn" data-open="${e(c.id)}">查看</button></td></tr>`;
-    }).join('') : '<tr><td colspan="7" class="case-empty">匯入 POS 檔開始。沒有符合篩選的案件時，可清除搜尋條件。</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="case-empty">沒有符合條件的案件。可調整篩選或匯入 POS 設備即時庫存。</td></tr>';
   }
   function renderSelection(count) {
     if(count===undefined)scheduleOrderPreview();
     if(count===undefined&&byId('caseStateFilter').value==='selected'){renderList();return;}
     byId('caseCount').textContent=`共 ${state.cases.length} 案｜符合 ${count??lookupCount} 案｜已勾選 ${selected.size} 案`;
+    byId('caseSelectedCount').textContent='已勾選 '+selected.size+' 案';
+    byId('caseBatchActions').hidden=!selected.size;
+    if(!selected.size)showOrders=false;
+    byId('caseOrderSection').hidden=!showOrders;
+    byId('caseOrderToggle').setAttribute?.('aria-expanded',String(showOrders));
     const pageCheck=byId('caseSelectPage');
     pageCheck.checked=visibleCases.length>0&&visibleCases.every(c=>selected.has(c.id));
     pageCheck.indeterminate=!pageCheck.checked&&visibleCases.some(c=>selected.has(c.id));
@@ -228,12 +392,11 @@
     const docs=VendorDocs.documents(c);
     return `<section class="case-section" aria-label="廠商交易文件">
       <h4><span aria-hidden="true">▤</span> 廠商銷貨單與發票</h4>
-      <p class="case-meta">選取文字型 PDF。核對供應商、案件及內容後再確認關聯。</p>
       <div class="case-doc-grid">${Cases.vendors.flatMap(vendor=>VendorDocs.kinds.map(kind=>{
         const canImport=Cases.hasVendor(c,vendor);
         const entries=docs.filter(d=>d.vendor===vendor&&d.kind===kind);
         return `<div class="case-doc-card">
-          ${vendorFileControl(vendor,kind,vendor+' '+kind+' PDF','',!canImport)}
+          <strong>${e(vendor+' '+kind)}</strong>
           <div class="case-meta">${canImport?(entries.length?'已保存 '+entries.length+' 份':'尚未匯入'):'此案件沒有此廠商的設備'}</div>
           ${entries.map(d=>`<div class="case-doc-saved"><strong>${e(d.name)} · PDF</strong>
             <span class="case-meta">${e(d.parsed.id)} · ${d.parsed.warnings.length?'部分欄位待核對':'已確認文件關聯'}</span>
@@ -243,6 +406,10 @@
             </div>${vendorFileControl(vendor,kind,'替換這份文件',d.key,!canImport)}</div>`).join('')}
           </div>`;
       })).join('')}</div>
+      <details${vendorPreview&&!vendorPreview.saved?' open':''}><summary>單筆補件（PDF）</summary>
+        <div class="case-doc-grid">${Cases.vendors.flatMap(vendor=>VendorDocs.kinds.map(kind=>
+          vendorFileControl(vendor,kind,vendor+' '+kind+' PDF','',!Cases.hasVendor(c,vendor)))).join('')}</div>
+      </details>
       <div id="caseVendorPreview"></div>
       </section>`;
   }
@@ -283,12 +450,15 @@
     if(!node||!d)return;
     const page=vendorPreview.page||0, size=25, from=page*size;
     const cell=value=>e(value===null||value===''?'—':String(value));
-    node.innerHTML=d.items.length?`<div class="case-table-scroll table-viewport" tabindex="0" aria-label="廠商品項預覽">
+    node.innerHTML=d.items.length?`<div class="erp-table-shell"><div id="caseDocTable" class="case-table-scroll table-viewport" tabindex="0" aria-label="廠商品項預覽">
       <table class="case-table"><thead><tr>${['品名／規格','產品編號','數量','單位','單價','未稅','含稅'].map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead>
       <tbody>${d.items.slice(from,from+size).map(i=>`<tr>${[i.name,i.code,i.quantity,i.unit,i.unitPrice,i.net,i.gross].map(value=>`<td>${cell(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <button type="button" id="caseDocTableGrip" class="erp-resize" aria-controls="caseDocTable" aria-label="調整表格高度。可拖曳、點按或用方向鍵微調"><span aria-hidden="true">⠿</span></button></div>
       ${d.items.length>size?`<div class="case-preview-pager"><button type="button" class="case-btn" data-doc-page="${page-1}" ${page===0?'disabled':''}>上一頁</button>
         <span>${from+1}–${Math.min(from+size,d.items.length)}／${d.items.length} 筆</span>
         <button type="button" class="case-btn" data-doc-page="${page+1}" ${from+size>=d.items.length?'disabled':''}>下一頁</button></div>`:''}`:'';
+    const table=byId('caseDocTable');
+    if(table?.style)initTableGrip(byId('caseDocTableGrip'),table);
   }
   async function readVendorDocument(file,vendor,kind,replaceKey) {
     const c=order();
@@ -520,6 +690,8 @@
     }
     Cases.restore(next);
     state = next;
+    batchItems=[];batchView='';batchPage=0;batchEditing=-1;showOrders=false;
+    renderBatch();
     if(type==='pos')clearPosFile();
     staged = null;
     changed();
@@ -577,7 +749,7 @@
     orderDirty=true;
     orderPage=0;
     byId('caseOrderFeedback').textContent='';
-    if(orderFrame)return;
+    if(!showOrders||orderFrame)return;
     if(typeof requestAnimationFrame!=='function'){drawOrderPreview();return;}
     orderFrame=requestAnimationFrame(()=>{orderFrame=0;drawOrderPreview();});
   }
@@ -652,6 +824,18 @@
     XLSX.writeFile(book, label + '_' + formatToday() + '.xlsx');
     status('已要求下載「' + label + '」。');
   }
+  const exports={
+    partner:orders=>write(Cases.billWorkbook(state,orders),'拍檔請款彙整'),
+    'partner-ready':orders=>write(Cases.billWorkbook(state,orders,true),'拍檔請款_可填請款'),
+    hm:orders=>write(Cases.huamaoWorkbook(state,orders,Cases.date(byId('casePayDate').value)),'華茂款項匯入資訊'),
+    sap:orders=>write(Cases.sapWorkbook(state,orders),'SAP_Key-in準備表')
+  };
+  function closeDetail() {
+    current='';vendorPreview=null;
+    updateActiveRow();renderDetail();
+    if(detailOpener?.isConnected)detailOpener.focus();
+    detailOpener=null;
+  }
   async function readDoc(file) {
     const c = order();
     if (!c || !file) return;
@@ -682,6 +866,10 @@
     changed(); render(); status('已加入附件參考。');
   }
   root.addEventListener('input',event=>{
+    if(event.target.id==='caseBatchSearch'){
+      const item=batchItems[batchEditing];
+      if(item)byId('caseBatchCase').innerHTML=batchOptions(item,event.target.value);
+    }
     if(staged?.type==='pos'&&['casePosFrom','casePosTo'].includes(event.target.id)){
       staged=null;
       renderPreview();
@@ -696,6 +884,12 @@
   root.addEventListener('change', event => {
     const target = event.target;
     if (busy) return;
+    if(target.id==='caseBatchFiles'){
+      const batch=Array.from(target.files||[]);
+      target.value='';
+      action(()=>runBatch(batch));
+      return;
+    }
     const files = {casePos: 'pos', caseQuote: 'quote', caseSap: 'sap', caseRequests: 'request'};
     const upload = target.files?.[0];
     if (upload) {
@@ -732,11 +926,13 @@
       changed();
       const line = target.closest('.case-message').querySelector('[data-order="line"]');
       line.checked = Boolean(s.line); line.disabled = !s.email;
-    } else if (target.id === 'caseVendor' || target.id === 'caseStateFilter') {
+    } else if (['caseVendor','caseStateFilter','caseDocumentFilter'].includes(target.id)) {
       filterPage = 0; renderList();
     } else if(target.id==='caseOrderChannel'){
       byId('caseOrderFeedback').textContent='';
       drawOrderPreview();
+    } else if(target.id==='caseExportKind'){
+      byId('casePayDateLabel').hidden=target.value!=='hm';
     } else if (target.id === 'casePartnerCode') {
       state.partnerCode = clean(target.value); changed();
     }
@@ -744,6 +940,29 @@
   root.addEventListener('click', event => {
     const b = event.target.closest('button');
     if (!b || busy) return;
+    if(b.dataset.batchView){
+      batchView=batchView===b.dataset.batchView?'':b.dataset.batchView;
+      batchPage=0;batchEditing=-1;renderBatch();
+      return;
+    }
+    if(b.dataset.batchPage){
+      batchPage+=Number(b.dataset.batchPage);batchEditing=-1;renderBatch();
+      return;
+    }
+    if(b.dataset.batchOpen!==undefined){
+      const item=batchItems[Number(b.dataset.batchOpen)];
+      if(item?.type!=='review'||!item.doc?.key)return;
+      batchEditing=item.index;
+      renderBatch();byId('caseBatchSearch').focus?.();
+      return;
+    }
+    if(b.dataset.batchIgnore!==undefined){
+      const item=batchItems[Number(b.dataset.batchIgnore)];
+      if(item?.type==='review'){
+        item.type='ignored';batchEditing=-1;renderBatch();renderList();
+      }
+      return;
+    }
     if(b.dataset.orderCopy){action(()=>copyOrders(b.dataset.orderCopy));return;}
     if(b.dataset.docPage!==undefined){
       const page=Number(b.dataset.docPage);
@@ -760,14 +979,16 @@
     if(b.dataset.docRemove){
       const c=order(), d=c&&VendorDocs.documents(c).find(d=>d.key===b.dataset.docRemove);
       if(d&&confirm('移除這份文件？已儲存的發票或回填可在請款前整理個別管理。')){
-        c.docs.splice(c.docs.indexOf(d),1);vendorPreview=null;changed();renderDetail();
+        c.docs.splice(c.docs.indexOf(d),1);vendorPreview=null;changed();renderList();renderDetail();
         status('已移除文件參考。');
       }
       return;
     }
     if (b.dataset.open) {
+      detailOpener=b;
+      vendorPreview=null;
       current=b.dataset.open; updateActiveRow(); renderDetail();
-      byId('caseDetail').scrollIntoView({block:'start',behavior:'auto'});
+      byId('caseDetail').focus?.();
       return;
     }
     if (b.dataset.copy) {
@@ -792,27 +1013,41 @@
       'clear-pos-file':()=>{clearPosFile();staged=null;renderPreview();status('已取消選檔。');},
       commit, cancel: () => { staged = null; renderPreview(); },
       prev: () => { filterPage--; renderList(); }, next: () => { filterPage++; renderList(); },
-      close:()=>{current='';updateActiveRow();renderDetail();},
+      close:closeDetail,
+      'close-batch':()=>{batchEditing=-1;renderBatch();},
+      'retry-batch':()=>applyBatch(awaitingMatch()),
       'preview-prev':()=>{if(staged&&staged.page>0){staged.page--;renderPreview();}},
       'preview-next':()=>{if(staged&&(staged.page+1)*previewSize<staged.items.length){staged.page++;renderPreview();}},
       review: () => { order().review = false; changed(); render(); },
       'select-filter': () => { for(const c of lookup()) selected.add(c.id); changed(); renderSelection(); },
       'clear-select': () => { selected.clear(); changed(); renderSelection(); },
       save: downloadWork,
-      partner: () => write(Cases.billWorkbook(state, checkBills()), '拍檔請款彙整'),
-      'partner-ready': () => write(Cases.billWorkbook(state, checkBills(), true), '拍檔請款_可填請款'),
-      hm: () => write(Cases.huamaoWorkbook(state, checkBills(), Cases.date(byId('casePayDate').value)), '華茂款項匯入資訊'),
-      sap: () => write(Cases.sapWorkbook(state, checkBills()), 'SAP_Key-in準備表'),
+      'export-selected':async()=>{
+        const exportBook=exports[byId('caseExportKind').value];
+        if(!exportBook)throw Error('請選擇匯出格式。');
+        const orders=checkBills();
+        status(`正在整理 ${orders.length} 個案件的 Excel…`);
+        await yieldUI();
+        exportBook(orders);
+      },
+      'toggle-order':()=>{
+        showOrders=!showOrders;
+        renderSelection(lookupCount);
+        if(showOrders)drawOrderPreview();
+      },
       'order-prev':()=>{if(orderPage>0){orderPage--;drawOrderPreview();}},
       'order-next':()=>{if((orderPage+1)*orderSize<selectedMessages().length){orderPage++;drawOrderPreview();}},
     };
-    const handler = handlers[b.dataset.caseAction];
+    const handler = handlers[b.dataset.caseAction] ||
+      (Object.hasOwn(exports,b.dataset.caseAction)?()=>exports[b.dataset.caseAction](checkBills()):null);
     if (handler) action(handler);
   });
   root.addEventListener('submit', event => {
     event.preventDefault();
     const form = event.target;
-    if (busy || !order()) return;
+    if(busy)return;
+    if(form.id==='caseBatchConfirm'){action(()=>resolveBatch(form));return;}
+    if(!order())return;
     if(form.id==='caseQuotationForm'){action(()=>buildQuotation(form,order()));return;}
     action(() => {
       const c = order();
@@ -857,6 +1092,20 @@
       changed(); render();
       status(feedback);
     });
+  });
+  root.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&current&&!busy)closeDetail();
+  });
+  const drop=byId('caseBatchDrop');
+  drop.addEventListener('dragover',event=>{
+    event.preventDefault();
+    if(!busy)drop.classList.add('is-dragging');
+  });
+  drop.addEventListener('dragleave',()=>drop.classList.remove('is-dragging'));
+  drop.addEventListener('drop',event=>{
+    event.preventDefault();
+    drop.classList.remove('is-dragging');
+    if(!busy)action(()=>runBatch(Array.from(event.dataTransfer.files)));
   });
   render();
   root.setAttribute?.('data-ready','');

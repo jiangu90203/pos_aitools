@@ -82,19 +82,23 @@ const VendorDocs = (() => {
     return result;
   }
   function parse(pages, fileName, vendor, kind) {
-    if(!Object.hasOwn(issuers,vendor)||!kinds.includes(kind))throw Error('請選擇有效的廠商與文件類型。');
     const rows=pages.flat(), text=rows.map(line).map(compact);
     if(!text.some(Boolean))throw Error('這份 PDF 沒有文字層。請使用同一份單據的原始電子 PDF，或使用原有手動發票表單。');
-    const other=Object.keys(issuers).find(v=>v!==vendor&&text.some(t=>t.startsWith(issuers[v])));
-    if(other)throw Error('文件抬頭為'+other+'，請改用正確的匯入欄位。');
-    if(!text.some(t=>t.startsWith(issuers[vendor])))throw Error('無法辨識所選廠商的文件抬頭。');
+    const needsReview=message=>Object.assign(new Error(message),{code:'VENDOR_DOC_REVIEW'});
+    const recognized = Object.keys(issuers).filter(v=>text.some(t=>t.startsWith(issuers[v])));
+    if(recognized.length!==1)throw needsReview('無法唯一辨識廠商抬頭。請核對原件，或使用案件詳情的手動補登。');
+    if(vendor&&vendor!==recognized[0])throw Error('文件抬頭為'+recognized[0]+'，請改用正確的匯入欄位。');
+    vendor=recognized[0];
+    kind=kind||(text.includes('電子發票證明聯')?'發票':
+      text.includes(vendor==='華茂'?'銷貨憑單':'出貨單')?'銷貨單':'');
+    if(!kinds.includes(kind))throw needsReview('無法辨識文件類型。請核對原件，或使用案件詳情的手動補登。');
     const sale=kind==='銷貨單';
     const typeTitle=sale ? (vendor==='華茂'?'銷貨憑單':'出貨單') : '電子發票證明聯';
-    if(text.includes('電子發票證明聯')&&text.includes(vendor==='華茂'?'銷貨憑單':'出貨單'))throw Error('此 PDF 同時含銷貨單及發票，請分開匯入。');
+    if(text.includes('電子發票證明聯')&&text.includes(vendor==='華茂'?'銷貨憑單':'出貨單'))throw needsReview('此 PDF 同時含銷貨單及發票，請分開匯入。');
     if(!text.includes(typeTitle))throw Error('文件類型與「'+vendor+kind+'」不符，或文字版型無法辨識。');
     const read=(re, label)=>{
       const matches=[...new Set(text.flatMap(s=>[...s.matchAll(new RegExp(re.source,re.flags.replace('g','')+'g'))].map(m=>m[1])))];
-      if(matches.length>1)throw Error('同一份文件有多個'+label+'，請拆成個別單據後匯入。');
+      if(matches.length>1)throw needsReview('同一份文件有多個'+label+'，請拆成個別單據後匯入。');
       return matches[0]||'';
     };
     const sourceFields={};
@@ -116,7 +120,7 @@ const VendorDocs = (() => {
         const index=page.findIndex(row=>compact(line(row))===typeTitle);
         return index<0?'':page.slice(index+1,index+3).map(row=>compact(line(row)).match(datePattern)?.[1]).find(Boolean)||'';
       }).filter(Boolean))];
-      if(dates.length>1)throw Error('同一份文件有多個發票日期，請拆成個別單據後匯入。');
+      if(dates.length>1)throw needsReview('同一份文件有多個發票日期，請拆成個別單據後匯入。');
       if(dates[0])sourceFields['發票日期']=dates[0];
       invoiceDate=dateOf(dates[0]);
     }
@@ -129,6 +133,14 @@ const VendorDocs = (() => {
       money('總計',sale?'總計[:：]':'^總計[:：]?');
     const recipient=sale&&vendor==='華茂' ? take('收件公司',/^公司名稱[:：](.+)$/) :
       sale ? take('轉寄資訊',/^貨寄[:：](.+)$/) : '';
+    // The observed partner shipping layout puts the recipient / contact in a dedicated cell.
+    const shipRow=sale&&vendor==='拍檔'?rows.find(row=>/^貨寄[:：]/.test(compact(line(row)))):null;
+    const shipCell=shipRow?.find(c=>/^[^/]+\s+\/\s+[^/]+$/.test(c.text)&&!/[：:]/.test(c.text));
+    const [partnerCompany='',partnerContact='']=shipCell?.text.split(/\s+\/\s+/)||[];
+    const shipCompany=vendor==='華茂'?recipient:partnerCompany;
+    const shipContact=sale&&vendor==='華茂'?take('收件聯絡人',/^聯絡人[:：](.+)$/):partnerContact;
+    const shipPhone=sale&&vendor==='華茂'?take('收件電話',/^電話[:：]([\d#-]+)$/):
+      shipRow?.find(c=>/^\d{2,4}-\d{6,8}$/.test(c.text))?.text||'';
     const buyer=take('帳款客戶',vendor==='華茂'&&sale?/^客戶名稱[:：]\d{8}(.+?)統一編號[:：]/:
       sale?/^帳款客戶[:：]([^()]+)\(/:/^買方[:：](.+?)(?:隨機碼[:：]|$)/);
     const items=pages.flatMap(page=>tableRows(page,vendor,kind,warnings));
@@ -152,7 +164,7 @@ const VendorDocs = (() => {
     }
     const invoiceReady=!sale&&!!(invoiceNo&&invoiceDate)&&validTotals&&linesMatch&&!warnings.length;
     return {key:id?JSON.stringify([vendor,kind,id]):'',name:fileName,vendor,kind,id,shipNo,shipDate,invoiceNo,invoiceDate,orderNo,
-      recipient,buyer,net,tax,gross,items,sourceFields,warnings:[...new Set(warnings)],invoiceReady};
+      recipient,shipCompany,shipContact,shipPhone,buyer,net,tax,gross,items,sourceFields,warnings:[...new Set(warnings)],invoiceReady};
   }
   async function read(file,vendor,kind) {
     const pages=await readPdfRecords(file,(_text,_name,_page,items)=>({rows:group(items)}));
@@ -190,5 +202,121 @@ const VendorDocs = (() => {
     if(prior)order.docs.splice(order.docs.indexOf(prior),1,attachment);
     else order.docs.push(attachment);
   }
-  return {kinds,read,association,save,documents};
+  function signature(doc) {
+    const {name,...record}=doc;
+    return JSON.stringify(record);
+  }
+  const identifiers = doc => ['shipNo','invoiceNo'].flatMap(field=>doc[field]?
+    [JSON.stringify([doc.vendor,field,compact(doc[field]).toUpperCase()])]:[]);
+  function planBatch(state, docs) {
+    const identities=new Map(), attached=new Map(), merchants=new Map(), invoiceRecords=new Map();
+    const insert=(map,key,value)=>{
+      if(!map.has(key))map.set(key,new Set());
+      map.get(key).add(value);
+    };
+    for(const c of state.cases){
+      for(const vendor of Cases.vendors.filter(v=>Cases.hasVendor(c,v)))insert(merchants,vendor+' '+compact(c.pos.merchant),c);
+      for(const d of documents(c)){
+        insert(attached,d.key,c);
+        identifiers(d.parsed).forEach(key=>insert(identities,key,c));
+      }
+    }
+    const cases=new Map(state.cases.map(c=>[c.id,c]));
+    for(const inv of state.invoices){
+      const key=JSON.stringify([inv.vendor,'invoiceNo',inv.no]);
+      invoiceRecords.set(key,inv);
+      for(const l of inv.links)if(cases.has(l.caseId))insert(identities,key,cases.get(l.caseId));
+    }
+    // SAP contributes only exact purchase invoice / quote / SHOP ID matches with a known supplier.
+    const byShopQuote=new Map();
+    for(const c of state.cases){
+      if(c.pos.quote&&c.pos.shopId)insert(byShopQuote,JSON.stringify([Cases.quoteKey(c.pos.quote),norm(c.pos.shopId)]),c);
+    }
+    for(const row of state.sap?.rows||[]){
+      const vendor={'華茂資訊':'華茂','華茂':'華茂','拍檔':'拍檔'}[clean(row[21])], no=clean(row[24]).toUpperCase();
+      if(!vendor||!/^[A-Z]{2}\d{8}$/.test(no)||!row[1]||!row[2])continue;
+      const matches=byShopQuote.get(JSON.stringify([Cases.quoteKey(row[2]),norm(row[1])]))||[];
+      for(const c of matches)if(Cases.hasVendor(c,vendor))insert(identities,JSON.stringify([vendor,'invoiceNo',no]),c);
+    }
+    const sets=new Map(), copies=new Map(), conflicts=new Set();
+    docs.forEach((doc,i)=>{
+      if(doc.key){
+        if(!copies.has(doc.key))copies.set(doc.key,i);
+        else if(signature(docs[copies.get(doc.key)])!==signature(doc))conflicts.add(doc.key);
+      }
+    });
+    const blocked = new Set(docs.filter(doc=>conflicts.has(doc.key)).flatMap(identifiers));
+    const usable = doc => doc.key&&!doc.warnings.length&&!conflicts.has(doc.key);
+    // Shared orders can span several deliveries, so only exact invoice/ship identifiers are joined.
+    docs.forEach((doc,i)=>{
+      if(usable(doc))identifiers(doc).forEach(key=>insert(sets,key,i));
+    });
+    const groups=new Map();
+    docs.forEach((doc,i)=>{
+      if(groups.has(i))return;
+      const group={candidates:new Set(),invalid:false,mismatch:false,onlyWeak:false,conflict:false};
+      groups.set(i,group);
+      if(!usable(doc))return;
+      const queue=[i], seen=new Set(), processedKeys=new Set();
+      for(let cursor=0;cursor<queue.length;cursor++){
+        const n=queue[cursor];
+        if(seen.has(n))continue;
+        seen.add(n); groups.set(n,group);
+        const d=docs[n];
+        for(const key of identifiers(d)){
+          if(processedKeys.has(key))continue;
+          processedKeys.add(key);
+          if(blocked.has(key))group.conflict=true;
+          for(const c of identities.get(key)||[]){
+            if(Cases.hasVendor(c,d.vendor))group.candidates.add(c);
+            else group.invalid=true;
+          }
+          for(const j of sets.get(key)||[])if(j!==n&&!seen.has(j))queue.push(j);
+        }
+        const company=d.shipCompany||(d.vendor==='華茂'?d.recipient:'');
+        const known=[...merchants.get(d.vendor+' '+compact(company))||[]];
+        const constrained=known.filter(c=>{
+          const contact=d.shipContact&&c.pos.contact, phone=d.shipPhone&&c.pos.phone;
+          const digits=s=>clean(s).replace(/\D/g,'');
+          return (contact||phone)&&(!contact||compact(c.pos.contact)===compact(d.shipContact))&&
+            (!phone||digits(c.pos.phone)===digits(d.shipPhone));
+        });
+        if(constrained.length)for(const c of constrained)group.candidates.add(c);
+        else if(known.length){
+          group.onlyWeak=true;
+          for(const c of known)group.candidates.add(c);
+        }
+      }
+      // Conflicting totals on documents claiming the same invoice require a person.
+      const totals=new Map();
+      for(const n of seen){
+        const d=docs[n];
+        if(!d.invoiceNo||[d.net,d.tax,d.gross].some(v=>v==null))continue;
+        const invoiceKey=JSON.stringify([d.vendor,'invoiceNo',d.invoiceNo]);
+        const amount=JSON.stringify([d.net,d.tax,d.gross]);
+        if(totals.has(invoiceKey)&&totals.get(invoiceKey)!==amount)group.mismatch=true;
+        const savedInvoice=invoiceRecords.get(invoiceKey);
+        if(savedInvoice&&(['net','tax','gross'].some(key=>savedInvoice[key]!==d[key])||
+          (d.invoiceDate&&savedInvoice.date!==d.invoiceDate)))group.mismatch=true;
+        totals.set(invoiceKey,amount);
+      }
+    });
+    return docs.map((doc,i)=>{
+      const group=groups.get(i);
+      const matches=[...group.candidates].map(c=>c.id);
+      const previous=[...attached.get(doc.key)||[]].map(c=>c.id);
+      let reason='';
+      if(!doc.key||doc.warnings.length)reason=doc.warnings.join('；')||'文件識別欄位不足。';
+      else if(conflicts.has(doc.key)||group.conflict)reason='同批有相同單號且內容不同，請核對關聯文件。';
+      else if(previous.length)reason='單號已保存，可確認後替換原文件。';
+      else if(copies.get(doc.key)!==i)reason='同批文件重複，已略過。';
+      else if(group.invalid)reason='文件識別與案件供應商不一致。';
+      else if(group.mismatch)reason='發票金額或日期有衝突，請先核對。';
+      else if(matches.length>1)reason='有多個可能案件，請指定正確案件。';
+      else if(!matches.length)reason='缺少可對應的發票、出貨單號或收件資料。';
+      else if(group.onlyWeak)reason='有相同商家，請核對收件人、電話或憑證。';
+      return {doc,caseId:matches.length===1?matches[0]:'',matches,previous,type:reason?'review':'ready',reason};
+    });
+  }
+  return {kinds,read,association,save,documents,planBatch};
 })();
