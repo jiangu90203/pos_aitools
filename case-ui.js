@@ -365,7 +365,7 @@
       ['報價單號', 'quote'], ['SHOP ID', 'shopId'], ['商家名稱', 'merchant'],
       ['收件人', 'contact'], ['電話', 'phone'], ['地址', 'address'],
       ['設備請款單號', 'request'], ['裝機請款單號', 'installRequest'],
-      ['華茂下單日期', 'hmDate'], ['峰潮下單日期', 'peakDate'], ['備註', 'notes']
+      ['華茂下單日期', 'hmDate'], ['峰潮下單日期', 'peakDate'], ['拍檔下單日期', 'partnerDate'], ['備註', 'notes']
     ].map(([label, key]) => [label, before[key], after[key]]);
     const equipment = p => p.devices.map(d => '設備'+d.slot+' '+d.raw+' × '+(d.qty ?? '待確認')).join('、');
     fields.push(['設備與數量', equipment(before), equipment(after)],
@@ -694,7 +694,6 @@
     renderPreview();
     scheduleOrderPreview();
     byId('caseSapSource').textContent=state.sap?'SAP資料庫已載入（'+state.sap.rows.length+' 列）':'Excel 檔，讀取指定的 VK SAP 工作表';
-    byId('casePartnerCode').value = state.partnerCode || '';
   }
   function clearPosFile() {
     posImport=null;
@@ -1070,8 +1069,6 @@
       if(dataset.autoDate&&elements.date.value===dataset.autoDate)elements.date.value='';
     } else if(target.id==='caseExportKind'){
       byId('casePayDateLabel').hidden=target.value!=='hm';
-    } else if (target.id === 'casePartnerCode') {
-      state.partnerCode = clean(target.value); changed();
     }
   });
   root.addEventListener('click', event => {

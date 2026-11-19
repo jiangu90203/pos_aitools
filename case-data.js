@@ -5,11 +5,17 @@ const Cases = (() => {
   const sapHeaders = ['', 'SHOP ID', '報價單編號', 'SAP 銷售(全)', '正式區銷項後勤', '銷售發票',
     '華茂下單日期', '商家名稱', '順立開出發票號碼', '發票日期', 'SAP 採購', '正式區進項交貨', '採購發票',
     '設備', '銷售價(含稅)', '數量', '試算未稅', '請款總金額', '採購價(含稅)', '採購價(未稅)',
-    '出貨廠商', '出貨廠商ID', 'vk請款單', '峰潮下單日期', '請款憑證', '憑證日期', '請款日期', '', '備註'];
+    '出貨廠商', '出貨廠商ID', 'vk請款單', '峰潮下單日期', '請款憑證', '憑證日期', '請款日期', '', '備註', '拍檔下單日期'];
+  const sapOrderColumns = [6, 23, sapHeaders.indexOf('拍檔下單日期')];
+  const partnerSapPrices = {
+    '拍檔POS主機': {purchaseNet:23800, saleNet:29180},
+    '拍檔POS客顯螢幕': {purchaseNet:6200, saleNet:6820}
+  };
+  const partnerSupplier = {code:'VAA0001432', id:'拍檔科技'};
   const hmHeaders = ['預計撥款日', '請款單號', '發票號碼', '發票日期', '說明', '金額', '已請款', '已撥款', '對帳單', '備註'];
   const billHeaders = ['來源列', 'SHOP ID', '報價單編號', '公司名稱', '供應商', '請款描述', '發票號碼',
     '發票日期', '金額（未稅）', '金額（含稅）', '處理狀態', '請款單號', '請款日期', '憑證來源', '備註'];
-  const create = () => ({version: 1, cases: [], invoices: [], quotes: [], sap: null, partnerCode: ''});
+  const create = () => ({version: 1, cases: [], invoices: [], quotes: [], sap: null});
   const initCase = pos => ({id: crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), x => x.toString(16).padStart(2, '0')).join(''),
     pos, orders: {}, docs: [], sale: {}, bills: {}});
   const desc = (order, vendor) => {
@@ -55,10 +61,12 @@ const Cases = (() => {
         } else if (qty > 0) devices.push({slot, item: standardItem(raw), raw, qty});
       }
       const info = getVendorContactInfo(row);
+      const partnerDate = excelDateToText(findVal(row, ['拍檔下單日期','拍檔下單日','拍檔訂購日期']));
       return {...info, quote: clean(findVal(row, ['報價單編號', '報價單號'])), shopId: clean(findVal(row, ['SHOP ID'])),
         request: requestNo(findVal(row, ['設備請款單號', '請款單號', '請款單編號'])),
         installRequest: requestNo(findVal(row, ['裝機請款單號'])),
         hmDate: excelDateToText(findVal(row, ['華茂下單日期'])), peakDate: excelDateToText(findVal(row, ['峰潮下單日期'])),
+        ...(partnerDate ? {partnerDate} : {}),
         notes: clean(findVal(row, ['備註'])), row: row.__rowNum, source, sheet, devices, issues};
     }).filter(p => p.merchant || p.quote || p.devices.length);
   }
@@ -364,9 +372,14 @@ const Cases = (() => {
     if (range.e.r > 20000) throw Error('SAP 工作表超過 20,000 列。');
     const values = XLSX.utils.sheet_to_json(ws, {header: 1, raw: true, defval: null,
       range: {s: {r: 0, c: 0}, e: {r: range.e.r, c: sapHeaders.length - 1}}});
-    if (!sapHeaders.every((h, i) => !h || norm(values[0][i]) === norm(h))) throw Error('SAP 樣板欄位與指定格式不同。');
+    const [,,partnerColumn] = sapOrderColumns;
+    if (!sapHeaders.slice(0,partnerColumn).every((h, i) => !h || norm(values[0][i]) === norm(h))) {
+      throw Error('SAP 樣板欄位與指定格式不同。');
+    }
+    const hasPartnerDate = norm(values[0][partnerColumn]) === norm(sapHeaders[partnerColumn]);
     const last = values.slice(1).filter(r => populated(r[2]));
     if(!last.length)throw Error('VK 工作表有表頭，但沒有報價單編號明細。');
+    if(!hasPartnerDate)for(const row of last)row.length=partnerColumn;
     return {source, rows: last};
   }
   function quotationRows(wb, source) {
@@ -449,8 +462,34 @@ const Cases = (() => {
       email:clean(fields.email), issuerContact:clean(fields.issuerContact), shopId:p.shopId,
       notes:String(fields.notes || '').trim(), lines, net, gross, tax:net === null || gross === null ? null : gross-net};
   }
+  function sapOrderDate(value) {
+    const source=clean(value).replace(/^(\d{3,4})(\d{2})(\d{2})$/,'$1-$2-$3');
+    try {return date(source);} catch {return '';}
+  }
+  function fillSapOrderDates(row, pos={}) {
+    const sources=[pos.hmDate,pos.peakDate,pos.partnerDate];
+    const dates=sapOrderColumns.map((col,i)=>sapOrderDate(row[col])||sapOrderDate(sources[i]));
+    const [hm,peak,partner]=dates;
+    const fallback=[peak||partner,hm||partner,peak||hm];
+    sapOrderColumns.forEach((column,i)=>{
+      if(sapOrderDate(row[column])||isBlankRequestNo(row[column])||clean(row[column])==='0'){
+        const value=dates[i]||fallback[i];
+        if(value)row[column]=value;
+      }
+    });
+    return row;
+  }
+  const partnerGross = net => Math.round(cents(net)*105/100)/100;
+  function completePartnerPrice(row, grossColumn, netColumn, defaultNet) {
+    if (populated(row[grossColumn]) && populated(row[netColumn])) return;
+    try {
+      const gross=amount(row[grossColumn]), net=amount(row[netColumn]);
+      if (net===null)row[netColumn]=gross===null?defaultNet:Math.round(cents(gross)*100/105)/100;
+      if (gross===null)row[grossColumn]=partnerGross(row[netColumn]);
+    } catch { /* Existing invalid price remains visible for manual review. */ }
+  }
   function formatSapDates(sheet, length) {
-    for (const [column, includeTime] of [[6,false],[9,false],[23,false],[25,false],[26,true]]) {
+    for (const [column, includeTime] of [...sapOrderColumns.map(c=>[c,false]),[9,false],[25,false],[26,true]]) {
       for (let row = 1; row <= length; row++) {
         const cell = sheet[XLSX.utils.encode_cell({r:row,c:column})];
         if (!cell) continue;
@@ -490,14 +529,14 @@ const Cases = (() => {
       if (p.issues.length || order.review || peers.length > 1) {
         report(peers.length > 1 ? '同報價單有多筆可能的 POS 案件，ERP 歷史保留原列，新資料待確認分批歸屬' :
           '設備待核對，ERP 歷史保留原列：' + p.issues.join('；'));
-        for (const r of old) if (!blockedHistory.has(r)) { rows.push(r.slice()); blockedHistory.add(r); }
+        for (const r of old) if (!blockedHistory.has(r)) { rows.push(fillSapOrderDates(r.slice())); blockedHistory.add(r); }
         continue;
       }
       const {matches, sales} = salesCandidates(state, order);
       const sale = order.sale.no ? order.sale : sales.length === 1 ? sales[0] : {};
       if (sales.length > 1 && !order.sale.no) report('有多張銷售發票候選，請確認後填入');
       if (!state.sap) report('未匯入歷史 VK 工作表，本次提供固定欄位空白底稿');
-      const used = new Set(), totaled = new Set();
+      const used = new Set(), totaled = new Set(), checkedPartnerInvoices = new Set();
       const devices = p.devices.filter(d => d.qty > 0);
       if (!devices.length) report('缺少有效的設備明細');
       const byVendor = Object.fromEntries(vendors.map(v => [v, invoiceLinks(state, order, v)]));
@@ -521,11 +560,11 @@ const Cases = (() => {
           if (!populated(row[i]) && populated(value)) row[i] = value;
         };
         fill(1, p.shopId); fill(2, p.quote); fill(7, p.merchant); fill(13, d.item); fill(15, d.qty);
-        if (vendor === '華茂') fill(6, p.hmDate);
-        if (!vendor) fill(23, p.peakDate);
+        fillSapOrderDates(row,p);
+        const partnerPrice=Object.hasOwn(partnerSapPrices,d.item)?partnerSapPrices[d.item]:null;
         if (vendor === '拍檔') {
-          fill(20, state.partnerCode);
-          if (!row[20]) report('拍檔供應商代碼待確認');
+          row[20]=partnerSupplier.code;
+          row[21]=partnerSupplier.id;
         }
         if (vendor === '華茂') fill(20, 'VAA0000037');
         fill(21, vendor === '華茂' ? '華茂資訊' : vendor);
@@ -533,7 +572,8 @@ const Cases = (() => {
         fill(8, sale.no); fill(9, sale.date);
         const prices = order.sale.lines?.find(l => l.slot === d.slot);
         const [gross, net] = prices ? [prices.gross, prices.net] : count(d) === 1 ? compatibleSalePrices(matches, d) : [];
-        fill(14, gross); fill(16, net);
+        if (!partnerPrice || !populated(row[14]) && !populated(row[16])) {fill(14, gross); fill(16, net);}
+        if (partnerPrice) completePartnerPrice(row,14,16,partnerPrice.saleNet);
         const entries = byVendor[vendor] || [];
         const entry = entries.find(e => isReady(billStatus(order, e.inv, e.link, entries)) &&
           linkSlots(order, entries, e.link, vendor).includes(d.slot));
@@ -554,17 +594,29 @@ const Cases = (() => {
               totaled.add(inv.key);
             }
             if (slots.length === 1 && cents(split.gross) % d.qty === 0 && cents(split.net) % d.qty === 0) {
-              fill(18, cents(split.gross) / d.qty / 100); fill(19, cents(split.net) / d.qty / 100);
-            } else if (!populated(row[18]) || !populated(row[19])) report('多設備憑證的個別採購價待分攤，已保留發票總額');
+              if (!partnerPrice || !populated(row[18]) && !populated(row[19])) {
+                fill(18, cents(split.gross) / d.qty / 100); fill(19, cents(split.net) / d.qty / 100);
+              }
+            } else if (partnerPrice && !checkedPartnerInvoices.has(inv.key)) {
+              checkedPartnerInvoices.add(inv.key);
+              const covered=devices.filter(device=>slots.includes(device.slot));
+              if (covered.every(device=>Object.hasOwn(partnerSapPrices,device.item))) {
+                const net=covered.reduce((sum,device)=>sum+partnerSapPrices[device.item].purchaseNet*device.qty,0);
+                if (cents(net)!==cents(split.net)||cents(partnerGross(net))!==cents(split.gross)) {
+                  report('拍檔發票 '+inv.no+' 與標準採購價合計不同，採購單價待核對，保留實際發票總額');
+                }
+              }
+            } else if (!partnerPrice && (!populated(row[18]) || !populated(row[19]))) report('多設備憑證的個別採購價待分攤，已保留發票總額');
           }
         }
+        if (partnerPrice) completePartnerPrice(row,18,19,partnerPrice.purchaseNet);
         fill(28, p.notes);
         if (!populated(row[14]) || !populated(row[16])) report('設備「' + d.item + '」的銷售單價待確認');
         rows.push(row);
       }
       for (const r of old) if (!used.has(r)) {
         report('VK 原表有未對應的設備列，已保留 ERP 歷史');
-        rows.push(r.slice());
+        rows.push(fillSapOrderDates(r.slice()));
       }
     }
     if (!rows.length && !notes.length) throw Error('勾選的案件沒有可輸出的設備資料。');

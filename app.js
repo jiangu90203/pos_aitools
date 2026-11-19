@@ -278,8 +278,8 @@ function standardItem(raw){let s=clean(raw).replace(/[\u200B-\u200D\uFEFF]/g,'')
   // POS「WIFI發票機」= 廠商下單 M303發票機(WIFI)
   const code=s.toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(code.includes('P8802') || code.includes('PP8802') || /^8802/.test(code)) return 'P8802';
-  if(/拍檔.*POS.*客顯|POS.*客顯.*螢幕|拍檔POS客顯螢幕/i.test(s)) return '拍檔POS客顯螢幕';
-  if(/拍檔.*POS.*主機|拍檔POS主機/i.test(s)) return '拍檔POS主機';
+  if(/拍檔.*POS.*客顯|POS.*客顯.*螢幕|PMC-?1500(?!\d)/i.test(s)) return '拍檔POS客顯螢幕';
+  if(/拍檔.*POS.*主機|A4-1-E(?=[/()\s]|$)|PartnerA4[/-]J6412/i.test(s)) return '拍檔POS主機';
   if(/T82III.*隔板|EPSON.*T82III.*隔板/i.test(s)) return 'EPSON T82III 隔板';
   if(/M303|WIFI發票機|WiFi發票機|wifi發票機|Wi\-?Fi發票機/i.test(s)) return 'WIFI發票機(M303)';
   if(/^發票機$|^一般發票機$|T82|T823|EPSON發票機/i.test(s)) return 'EPSON發票機';
@@ -826,7 +826,7 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.11#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.12#${name}"></use></svg>`;
 }
 // Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {
