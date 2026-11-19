@@ -91,6 +91,12 @@ const VendorDocs = (() => {
       const n=row.filter(c=>c.x>=quantity.x-8&&(!sale||vendor!=='拍檔'?c.x+c.width/2<monetaryEnd:true)).map(c=>number(c.text)).filter(v=>v!==null);
       const expected=sale&&vendor==='華茂'?4:3;
       if(!left.length)continue;
+      if(!sale&&vendor==='拍檔'&&!n.length&&result.length&&/^[A-Z0-9][A-Z0-9./+ -]*$/i.test(line(left))){
+        const previous=result.at(-1);
+        previous.name+=' '+line(left);
+        previous.raw+=' / '+raw;
+        continue;
+      }
       const position = sale ? number(left[0].text) : null;
       if(sale&&(position===null||!Number.isInteger(position)||position<1))continue;
       if(n.length!==expected){
@@ -110,7 +116,14 @@ const VendorDocs = (() => {
         item.code=codeCell?.text||'';
         item.name=line((page[i+1]||[]).filter(c=>c.x>=code.x-3 && c.x<quantity.x-8));
         item.unit=left.find(c=>/^(PCS|SET)$/i.test(c.text))?.text||'';
-        if(item.name){item.raw+=' / '+line(page[++i]);}
+        if(item.name){
+          item.raw+=' / '+line(page[++i]);
+          while(page[i+1]?.[0].x>=code.x-3&&page[i+1].every(c=>c.x<quantity.x-8)&&
+              /^[A-Z0-9][A-Z0-9./+ -]*$/i.test(line(page[i+1]))){
+            item.name+=' '+line(page[i+1]);
+            item.raw+=' / '+line(page[++i]);
+          }
+        }
       }
       if(!item.name||!Number.isFinite(item.quantity)||item.quantity<=0){
         warnings.push('有品項的名稱或數量待確認。');continue;
@@ -193,14 +206,17 @@ const VendorDocs = (() => {
     // The observed partner shipping layout puts the recipient / contact in a dedicated cell.
     const shipRow=sale&&vendor==='拍檔'?rows.find(row=>/^貨寄[:：]/.test(compact(line(row)))):null;
     const shipCell=shipRow?.find(c=>/^[^/]+\s+\/\s+[^/]+$/.test(c.text)&&!/[：:]/.test(c.text));
-    const [partnerCompany='',partnerContact='']=shipCell?.text.split(/\s+\/\s+/)||[];
+    const phoneCell=shipRow?.find(c=>/^0[\d -]{7,14}(?:\s*#\s*\d+)?$/.test(c.text));
+    const delivery=shipRow?line(shipRow.filter(c=>c!==phoneCell)).replace(/^(?:貨寄\s*[:：]\s*)+/,''):'';
+    const explicit=delivery.match(/^(.*?)公司名稱\s*[:：]\s*(.*?)(?:聯絡人\s*[:：]\s*(.*))?$/);
+    const [partnerCompany='',partnerContact='']=explicit?explicit.slice(2):shipCell?.text.split(/\s+\/\s+/)||[];
     const shipCompany=vendor==='華茂'?recipient||fallback('公司名稱'):partnerCompany;
     const shipContact=sale&&vendor==='華茂'?take('收件聯絡人',/^聯絡人[:：](.+)$/,undefined,inRecipient):partnerContact;
     const shipPhone=sale&&vendor==='華茂'?take('收件電話',/^電話[:：]([\d#\-+、/,]+)$/,undefined,inRecipient):
-      shipRow?.find(c=>/^(?=\d{2,4}[- ])(?:\d[- ]?){8,10}$/.test(c.text))?.text||'';
+      phoneCell?.text||'';
     const shipAddress=sale&&vendor==='華茂'&&recipientHeading>=0?
       take('收件地址',/^(?:收件)?地址[:：](.+)$/,undefined,inRecipient):
-      shipCell?line(shipRow.filter(c=>c.x<shipCell.x)).replace(/^(?:貨寄\s*[:：]\s*)+/,''):'';
+      explicit?.[1].trim()||(shipCell?line(shipRow.filter(c=>c.x<shipCell.x)).replace(/^(?:貨寄\s*[:：]\s*)+/,''):'');
     const buyer=take('帳款客戶',vendor==='華茂'&&sale?/^客戶名稱[:：]\d{8}(.+?)統一編號[:：]/:
       sale?/^帳款客戶[:：]([^()]+)\(/:/^買方[:：](.+?)(?:隨機碼[:：]|$)/)||fallback('客戶名稱');
     const buyerLabel=text.findIndex(row=>/^買方[:：]/.test(row));
@@ -371,6 +387,18 @@ const VendorDocs = (() => {
   };
   const phones = value => compact(value).split(/[,、/;]/).map(part=>digits(part.replace(
     /^\+886-?0?/,'0').replace(/(?:#|分機|ext\.?)[-\d]+$/i,''))).filter(s=>/^0\d{8,9}$/.test(s));
+  function partnerQuantities(slip, order) {
+    const types={'A4-1-E':'拍檔POS主機','PMC-1500':'拍檔POS客顯螢幕'};
+    const units={};
+    for(const item of slip.items){
+      const model=Object.keys(types).find(prefix=>textId(item.name).startsWith(prefix+'/'));
+      if(!model&&item.net!==0)return null;
+      if(model)units[types[model]]=(units[types[model]]||0)+item.quantity;
+    }
+    if(!Object.keys(units).length)return null;
+    return Object.values(types).every(type=>(units[type]||0)===order.pos.devices
+      .filter(d=>d.item===type).reduce((sum,d)=>sum+(d.qty||0),0));
+  }
   function recipientRank(slip, order) {
     const company=merchantKey(slip.shipCompany||slip.recipient);
     const merchant=merchantKey(order.pos.merchant);
@@ -384,6 +412,7 @@ const VendorDocs = (() => {
     const samePhone=docPhones.some(phone=>casePhones.includes(phone));
     const fromContact=contactKey(slip.shipContact), toContact=contactKey(order.pos.contact);
     const contactConflict=fromContact&&toContact&&fromContact!==toContact;
+    if(slip.vendor==='拍檔'&&partnerQuantities(slip,order)===false)return 0;
     if(sameAddress&&samePhone&&!contactConflict)return exact?4:3;
     if(sameAddress||samePhone&&!contactConflict)return exact?3:2;
     if(!exact||slip.vendor!=='華茂'||slip.gross==null||slip.gross<=0||order.pos.issues.length||
@@ -549,7 +578,18 @@ const VendorDocs = (() => {
         }
         if(group.anchored){
           if(matches.length&&!matches.some(c=>group.matches.has(c.id)))group.hard.add('收件資料指向其他案件');
-        }else for(const c of matches)group.matches.add(c.id);
+        }else{
+          if(slip.vendor==='拍檔'&&matches.length>1&&slip.shipDate){
+            const recent=matches.filter(c=>{
+              let ordered;
+              try{ordered=Cases.date(c.pos.peakDate);}catch{return false;}
+              const delta=(Date.parse(slip.shipDate)-Date.parse(ordered))/86400000;
+              return delta>=0&&delta<=45;
+            });
+            if(recent.length===1)matches=recent;
+          }
+          for(const c of matches)group.matches.add(c.id);
+        }
       }
       if(!group.anchored&&slips.length&&group.matches.size===1&&key){
         const target=recordKey(doc.vendor,[...group.matches][0]);
@@ -593,7 +633,10 @@ const VendorDocs = (() => {
         if(notices.length)reason=notices.join('；')+'，請核對後帶入請款。';
       }
       seen.add(doc.key);
-      return {doc,caseId:type==='ready'?matches[0]:'',matches,type,reason:reason?summary+'｜'+reason:'',pair};
+      const owners=attached.get(doc.key);
+      const caseId=type==='ready'?matches[0]:
+        type==='duplicate'&&!conflicts.has(doc.key)&&owners?.size===1?[...owners][0].id:'';
+      return {doc,caseId,matches,type,reason:reason?summary+'｜'+reason:'',pair};
     });
   }
   function saveDecision(state,order,decision,archiveKey='') {

@@ -116,6 +116,7 @@
     const slice=items.slice(batchPage*orderSize,(batchPage+1)*orderSize);
     node.innerHTML=`<div class="erp-batch-summary">
       <strong role="status">成功配對 ${counts.linked} 筆｜未找到對應案件 ${counts.unmatched} 筆｜文件重複 ${counts.duplicate} 筆｜解析失敗 ${counts.failed} 筆</strong>
+      ${batchItems.some(item=>item.file)?`<button type="button" class="case-btn primary" data-case-action="download-vendor-batch">${uiIcon('download')} 下載本批歸檔 ZIP</button>`:''}
       ${Object.entries({unmatched:'查看未配對',duplicate:'查看重複文件',failed:'查看解析失敗',issues:'查看配對提醒（'+issues.length+'）'}).map(([key,label])=>
         (counts[key]||key==='issues'&&issues.length)?`<button type="button" class="case-btn" aria-pressed="${batchView===key}" data-batch-view="${key}">${label}</button>`:'').join('')}
     </div>
@@ -138,6 +139,16 @@
     if(workbooks.length>1)throw Error('每批可選一份 POS Excel 與多份 PDF。請重新選擇檔案。');
     const [workbook]=workbooks;
     const documents=files.filter(file=>file!==workbook);
+    if(workbook&&(documents.length||queuedFiles.length)){
+      const rows=await ImportIO.excel(workbook,'pos');
+      clearPosFile();
+      if(staged?.type==='pos'){staged=null;renderPreview();}
+      const batch=[...queuedFiles,...documents];
+      queuedFiles=[];
+      renderQueue();
+      await runBatch(batch,undefined,undefined,rows);
+      return;
+    }
     if(workbook||posImport||!state.cases.length){
       if(workbook)await importExcel(workbook,'pos',true);
       queuedFiles.push(...documents);
@@ -154,7 +165,7 @@
     renderQueue();
     await runBatch(files);
   }
-  async function runBatch(files,vendor,kind) {
+  async function runBatch(files,vendor,kind,positions) {
     if(!files.length&&!pendingDocuments.length)return;
     batchItems=[...pendingDocuments];
     batchView=''; batchPage=0;
@@ -164,15 +175,22 @@
       try{
         const records=await VendorDocs.readRecords(file,vendor,kind);
         for(const record of records){
-          batchItems.push({name:file.name,pages:record.pages,doc:record.doc,file:record.doc?file:null,
+          batchItems.push({name:file.name,pages:record.pages,doc:record.doc,file,
             type:record.error?'failed':'',reason:record.error?.message||''});
         }
       }catch(err){
-        batchItems.push({name:file.name,type:'failed',reason:err.message||'無法讀取 PDF。'});
+        batchItems.push({name:file.name,file,type:'failed',reason:err.message||'無法讀取 PDF。'});
       }
     }
     const items=batchItems.filter(item=>item.doc);
-    const plan=VendorDocs.planBatch(state,items.map(item=>item.doc));
+    const projected=positions?{...state,cases:state.cases.slice()}:state;
+    if(positions)Cases.commitPos(projected,Cases.previewPos(state,positions),new Map());
+    const plan=VendorDocs.planBatch(projected,items.map(item=>item.doc));
+    if(positions){
+      const targets=new Set(plan.filter(p=>p.type==='ready').map(p=>p.caseId));
+      const additions=projected.cases.slice(state.cases.length).filter(c=>targets.has(c.id));
+      if(additions.length){state.cases=[...state.cases,...additions];indexCases();changed();}
+    }
     let saved=0, sliceStart=performance.now();
     const archives=new Map();
     for(const [i,item] of items.entries()){
@@ -194,11 +212,76 @@
       if(performance.now()-sliceStart>12){await yieldUI();sliceStart=performance.now();}
     }
     pendingDocuments=batchItems.filter(item=>item.type==='unmatched'&&item.doc?.key);
-    for(const item of batchItems)if(item.type!=='unmatched')delete item.file;
     if(saved)changed();
     renderBatch();
     render();
     status('文件比對已完成。');
+  }
+  async function downloadVendorBatch() {
+    const archive=XLSX.CFB.utils.cfb_new(), added=new Map(), casesByVendor=new Map(), filenames=new Map();
+    const summary=[['狀態','公司名稱','POS 來源列','供應商','出貨單號','訂單單號','發票號碼','原始檔案','頁碼','說明']];
+    const labels={linked:'成功歸檔',duplicate:'重複',unmatched:'待核對',failed:'解析失敗'};
+    const safe=s=>String(s||'').replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').replace(/[. ]+$/,'').slice(0,90);
+    const add=(name,data)=>{
+      // SheetJS writes ASCII path bytes. Reserve matching lengths for the UTF-8 paths.
+      const path=new TextEncoder().encode(name);
+      const placeholder=('entry'+filenames.size).padEnd(path.length,'_');
+      filenames.set(placeholder,path);
+      XLSX.CFB.utils.cfb_add(archive,placeholder,new Uint8Array(data));
+    };
+    for(const item of batchItems){
+      const doc=item.doc, record=['linked','duplicate'].includes(item.type)?
+        caseIndex.get(item.caseId)?.record:null;
+      if(record&&doc){
+        if(!casesByVendor.has(doc.vendor))casesByVendor.set(doc.vendor,new Set());
+        casesByVendor.get(doc.vendor).add(record);
+      }
+      summary.push([labels[item.type],record?.pos.merchant||doc?.shipCompany||'',record?.pos.row??'',
+        doc?.vendor,doc?.shipNo,doc?.orderNo,doc?.invoiceNo,item.name,VendorDocs.pageLabel(item.pages),item.reason]);
+      if(!item.file||!/\.pdf$/i.test(item.name))continue;
+      const folder=record?
+        [safe(doc?.vendor),record.pos.row+'_'+safe(record.pos.merchant)+'_'+safe(record.pos.quote)].join('/'):
+        '待核對';
+      if(!added.has(folder))added.set(folder,new Set());
+      const group=added.get(folder);
+      if(group.has(item.file))continue;
+      group.add(item.file);
+      add(folder+'/'+String(group.size).padStart(2,'0')+'_'+safe(item.name.replace(/\.pdf$/i,''))+'.pdf',
+        await readArrayBuffer(item.file));
+    }
+    const book=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet(summary),'配對紀錄');
+    add('配對紀錄.xlsx',XLSX.write(book,{type:'array',bookType:'xlsx'}));
+    for(const [vendor,records] of casesByVendor){
+      const orders=[...records].sort((a,b)=>a.pos.row-b.pos.row);
+      const wb=vendor==='拍檔'?Cases.billWorkbook(state,orders):Cases.huamaoWorkbook(state,orders);
+      add(vendor+'/'+(vendor==='拍檔'?'拍檔請款彙整':'華茂款項匯入資訊')+'.xlsx',XLSX.write(wb,{type:'array',bookType:'xlsx'}));
+    }
+    const bytes=new Uint8Array(XLSX.CFB.write(archive,{fileType:'zip',type:'array'}));
+    const view=new DataView(bytes.buffer);
+    const end=bytes.length-22;
+    if(view.getUint32(end,true)!==0x06054b50)throw Error('無法完成 ZIP 歸檔。');
+    const count=view.getUint16(end+10,true);
+    let offset=view.getUint32(end+16,true);
+    const decoder=new TextDecoder();
+    for(let i=0;i<count;i++){
+      const local=view.getUint32(offset+42,true);
+      const length=view.getUint16(offset+28,true);
+      const path=filenames.get(decoder.decode(bytes.subarray(offset+46,offset+46+length)));
+      if(!path||path.length!==length)throw Error('無法儲存 ZIP 中的原始檔名。');
+      bytes.set(path,local+30);
+      bytes.set(path,offset+46);
+      view.setUint16(local+6,view.getUint16(local+6,true)|0x0800,true);
+      view.setUint16(offset+8,view.getUint16(offset+8,true)|0x0800,true);
+      offset+=46+length+view.getUint16(offset+30,true)+view.getUint16(offset+32,true);
+    }
+    const url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));
+    const link=document.createElement('a');
+    link.href=url;
+    link.download='供應商請款歸檔_'+formatToday()+'.zip';
+    link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    status('已要求下載本批歸檔 ZIP。');
   }
   function lookup() {
     const query = norm(byId('caseSearch').value);
@@ -1067,6 +1150,7 @@
       'cancel-doc':()=>{vendorPreview=null;renderVendorPreview();},
       'apply-pos-range':applyPosRange,
       'clear-queued-files':()=>{queuedFiles=[];renderQueue();},
+      'download-vendor-batch':downloadVendorBatch,
       'pos-add-all':()=>setPosChoices('add','pos-add-all'),
       'pos-skip-all':()=>setPosChoices('skip','pos-skip-all'),
       'clear-pos-file':()=>{clearPosFile();staged=null;renderPreview();status('已取消選檔。');},
