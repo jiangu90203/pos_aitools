@@ -151,9 +151,9 @@ button:not(:disabled), summary { cursor:pointer; }
 .erp-primary { border-color:var(--primary); background:var(--primary); color:var(--on-primary); gap:.35rem; }
 .erp-primary:hover,.erp-primary.is-dragging { background:var(--primary-hover); }
 .erp-toolbar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:end; margin:.55rem 0; }
-.erp-toolbar .case-filter { flex:1 1 495px; margin:0; gap:.45rem; grid-template-columns:minmax(170px,2.1fr) repeat(3,minmax(98px,1fr)); }
+.erp-toolbar .case-filter { flex:1 1 495px; margin:0; gap:.45rem; grid-template-columns:minmax(170px,2.1fr) repeat(2,minmax(98px,1fr)); }
 .erp-toolbar .case-filter label { gap:.15rem; font-size:.79rem; }
-.erp-sources { margin:.45rem 0; padding:.33rem .55rem; background:var(--surface-soft); }
+
 .erp-sources .case-import { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .case-messages { margin:.28rem 0; justify-content:flex-start; min-height:1.4em; }
 #caseSaveState { margin-inline-start:auto; }
@@ -229,7 +229,7 @@ button:not(:disabled), summary { cursor:pointer; }
 }
 @media(max-width:680px) {
   .main,.panel,.toolCard { padding:8px; }
-  .erp-toolbar .case-filter { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .erp-toolbar .case-filter { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .erp-toolbar .case-filter label:first-child { grid-column:1/-1; }
   .workflowGrid,.vendorOutputs,.erp-sources .case-import { grid-template-columns:minmax(0,1fr); }
   .dashGrid { grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); }
@@ -559,44 +559,29 @@ button:not(:disabled), summary { cursor:pointer; }
   .erp-version { display:none; }
 }
 
-.drive-sync { --case-muted:var(--muted); position:relative; flex:none; }
-.erp-topbar:has(.drive-sync[open]) { z-index:21; }
-.drive-sync-toggle { position:relative; width:38px; padding:0; list-style:none; }
-.drive-sync-toggle::-webkit-details-marker { display:none; }
-.drive-sync-toggle .ui-icon { width:21px; height:21px; }
-.drive-sync[open] .drive-sync-toggle { background:var(--accent-soft); border-color:var(--accent-border); }
-.drive-sync-toggle:is([data-tone="error"],[data-tone="warning"],[data-tone="success"])::after {
-  content:"";
+.case-workspace .case-head { position:relative; }
+.case-source-menu { margin-inline-start:auto; }
+.case-source-menu summary { cursor:pointer; }
+.case-source-menu[open] > summary { background:var(--accent-soft); border-color:var(--accent-border); }
+.case-source-body {
   position:absolute;
-  inset:5px 5px auto auto;
-  width:6px;
-  height:6px;
-  border-radius:50%;
-  background:var(--drive-tone);
-}
-.drive-sync-toggle[data-tone="error"] { --drive-tone:var(--danger); }
-.drive-sync-toggle[data-tone="warning"] { --drive-tone:var(--warning); }
-.drive-sync-toggle[data-tone="success"] { --drive-tone:var(--success); }
-.drive-sync-body [data-tone="error"] { color:var(--danger); }
-.drive-sync-body [data-tone="warning"] { color:var(--warning); }
-.drive-sync-body [data-tone="success"] { color:var(--success); }
-.drive-sync-body {
-  position:absolute;
-  inset:calc(100% + 8px) 0 auto auto;
-  width:min(23rem,calc(100vw - 24px));
-  max-height:calc(100dvh - var(--topbar-height) - 12px);
+  inset:calc(100% + 4px) 0 auto auto;
+  z-index:8;
+  width:min(54rem,100%);
+  max-height:min(68vh,34rem);
   overflow:auto;
-  overflow-wrap:anywhere;
-  padding:.85rem;
-  background:var(--surface);
+  box-sizing:border-box;
+  padding:.75rem;
   border:1px solid var(--line);
-  border-radius:10px;
-  box-shadow:0 8px 28px var(--shadow);
+  border-radius:8px;
+  background:var(--surface);
+  box-shadow:0 8px 26px var(--shadow);
 }
-.drive-sync[open] .drive-sync-body,.drive-sync-versions { display:grid; justify-items:start; gap:.55rem; }
-.drive-sync-body h2 { margin:0; font-size:1rem; }
-.drive-sync-versions { width:100%; border-top:1px solid var(--line); padding-top:.55rem; }
-.drive-sync-body > label,.drive-sync-versions > label { display:grid; gap:.3rem; width:100%; }
-.drive-sync-body :is(input,select) { width:100%; min-width:0; min-height:36px; }
-.drive-sync-body > a { color:var(--accent); }
-.drive-sync-body > p { margin:0; }
+.case-source-body .case-import { margin-block:0 .65rem; }
+@media(prefers-reduced-motion:no-preference) {
+  .case-workspace :is(.case-btn,.case-upload,input,select) {
+    transition:background-color 140ms ease,border-color 140ms ease,box-shadow 140ms ease;
+  }
+  .case-source-menu[open] .case-source-body { animation:case-source-in 140ms ease-out; }
+  @keyframes case-source-in { from { opacity:0; transform:translateY(-4px); } }
+}

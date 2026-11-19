@@ -22,7 +22,6 @@
   let quoteUrl='', orderFrame=0, orderDirty=true, ordersByVendor=new Map();
   let caseIndex = new Map(), indexedCases, billsByCase = new Map(), visibleCases = [], filterFrame = 0;
   let stageByCase = new Map();
-  let cloud;
   const order = () => caseIndex.get(current)?.record;
   function indexCases() {
     if(indexedCases===state.cases)return;
@@ -61,14 +60,60 @@
     }
     if (notify) reportOperation(message,tone);
   };
+  let saveTimer, changeVersion=0, workRevision=0, savingWork=false;
+  const workKey=String(globalThis.location?.pathname||'/').replace(/index\.html$/,'');
+  function localWork(mode, value){
+    return new Promise((resolve,reject)=>{
+      const request=indexedDB.open('pos-billing-workspace',1);
+      request.onupgradeneeded=()=>request.result.createObjectStore('work');
+      request.onblocked=()=>reject(Error('本機工作資料正在其他分頁使用。'));
+      request.onerror=()=>reject(request.error);
+      request.onsuccess=()=>{
+        const db=request.result;
+        try{
+          const tx=db.transaction('work',mode), store=tx.objectStore('work');
+          const result=store.get(workKey);
+          let conflict=false;
+          if(mode==='readwrite')result.onsuccess=()=>{
+            if((result.result?.revision??0)!==workRevision){
+              conflict=true;
+              tx.abort();
+            }else store.put({...value,revision:workRevision+1},workKey);
+          };
+          tx.oncomplete=()=>{db.close();resolve(result.result);};
+          tx.onabort=()=>{db.close();reject(conflict?Error('其他分頁已更新本機資料，請保留來源檔案。'):tx.error);};
+        }catch(err){db.close();reject(err);}
+      };
+    });
+  }
+  async function persistWork(){
+    if(savingWork)return;
+    savingWork=true;
+    const version=changeVersion;
+    try{
+      await localWork('readwrite',{data:state,selected:[...selected]});
+      workRevision++;
+      if(changeVersion===version){
+        dirty=false;
+        byId('caseSaveState').textContent='已儲存在此瀏覽器';
+      }
+    }catch(err){
+      byId('caseSaveState').textContent=err?.message==='其他分頁已更新本機資料，請保留來源檔案。'?
+        err.message:'本機儲存失敗，請保留來源檔案';
+    }finally{
+      savingWork=false;
+      if(changeVersion!==version){
+        clearTimeout(saveTimer);
+        saveTimer=setTimeout(persistWork,120);
+      }
+    }
+  }
   const changed = () => {
-    dirty = true;
-    byId('caseSaveState').textContent = '有未下載的案件更新';
-    cloud?.changed();
-  };
-  const saved = (message = '案件工作檔已就緒') => {
-    dirty = false;
-    byId('caseSaveState').textContent = message;
+    dirty=true;
+    changeVersion++;
+    clearTimeout(saveTimer);
+    byId('caseSaveState').textContent=globalThis.indexedDB?'儲存至此瀏覽器…':'此工作階段的資料未儲存';
+    if(globalThis.indexedDB)saveTimer=setTimeout(persistWork,120);
   };
   window.addEventListener('beforeunload', event => {
     if (dirty) { event.preventDefault(); event.returnValue = ''; }
@@ -78,7 +123,7 @@
     busy = true;
     byId('caseBusy').hidden = false;
     try { await fn(); } catch (err) { status(err.message || '操作失敗，請檢查資料。', true); }
-    finally { busy = false; byId('caseBusy').hidden = true; cloud?.schedule(); }
+    finally { busy = false; byId('caseBusy').hidden = true; }
   }
   function billFlags(c,vendor) {
     if(c.pos.issues.length||c.review)return ['待核對設備'];
@@ -146,10 +191,16 @@
   function renderQueue() {
     byId('caseBatchQueue').hidden=!queuedFiles.length;
     byId('caseBatchQueueStatus').textContent=queuedFiles.length?
-      `已選 ${queuedFiles.length} 份 PDF，匯入 POS 或載入工作檔後會自動核對。`:'';
+      `已選 ${queuedFiles.length} 份 PDF，匯入 POS 或匯入舊版案件備份後會自動核對。`:'';
   }
   async function importBatch(files) {
-    if(files.length)recordActivity('案件工作台開始匯入 '+files.length+' 份檔案。');
+    if(files.length)recordActivity('主控台開始匯入 '+files.length+' 份檔案。');
+    const backups=files.filter(file=>/\.json$/i.test(file.name));
+    if(backups.length){
+      if(files.length!==1)throw Error('舊版案件 JSON 備份請單獨匯入。');
+      await loadWork(backups[0]);
+      return;
+    }
     const workbooks=files.filter(file=>/\.xlsx?$/i.test(file.name));
     if(workbooks.length>1)throw Error('每批可選一份 POS Excel 與多份 PDF。請重新選擇檔案。');
     const [workbook]=workbooks;
@@ -157,7 +208,7 @@
     if(workbook&&(documents.length||queuedFiles.length)){
       const rows=await ImportIO.excel(workbook,'pos');
       clearPosFile();
-      if(staged?.type==='pos'){staged=null;renderPreview();}
+      if(staged){staged=null;renderPreview();}
       const batch=[...queuedFiles,...documents];
       queuedFiles=[];
       renderQueue();
@@ -165,10 +216,10 @@
       return;
     }
     if(workbook||posImport||!state.cases.length){
-      if(workbook)await importExcel(workbook,'pos',true);
+      if(workbook)await importExcel(workbook,'pos');
       queuedFiles.push(...documents);
       renderQueue();
-      if(!posImport)status('請加入一份 POS Excel 或載入工作檔，系統會接續核對已選 PDF。');
+      if(!posImport)status('請加入一份 POS Excel 或匯入舊版案件備份，系統會接續核對已選 PDF。');
       return;
     }
     await runBatch(documents);
@@ -198,18 +249,30 @@
       }
     }
     const items=batchItems.filter(item=>item.doc);
-    const projected=positions?{...state,cases:state.cases.slice()}:state;
-    if(positions)Cases.commitPos(projected,Cases.previewPos(state,positions),new Map());
+    const projected=positions?{...state}:state;
+    const posResult=positions&&Cases.commitPos(projected,Cases.previewPos(state,positions));
     const plan=VendorDocs.planBatch(projected,items.map(item=>item.doc));
-    if(positions){
+    if(posResult){
       const targets=new Set(plan.filter(p=>p.type==='ready').map(p=>p.caseId));
-      const additions=projected.cases.slice(state.cases.length).filter(c=>targets.has(c.id));
-      if(additions.length){state.cases=[...state.cases,...additions];indexCases();changed();}
+      const retained=projected.cases.filter(c=>!posResult.addedIds.has(c.id)||targets.has(c.id));
+      const added=retained.filter(c=>posResult.addedIds.has(c.id)).length;
+      if(added||posResult.update||posResult.duplicates){
+        state={...projected,cases:retained};
+        afterPosCommit(posResult);
+      }
+      recordActivity(posSummary({...posResult,new:added}),'info','即時庫存');
     }
     let saved=0, sliceStart=performance.now();
     const archives=new Map();
     for(const [i,item] of items.entries()){
       Object.assign(item,plan[i]);
+      if(item.type==='duplicate'&&VendorDocs.refreshInvoice){
+        try{
+          const refreshed=await VendorDocs.refreshInvoice(state,item.doc,item.file);
+          if(refreshed){Object.assign(item,refreshed,{type:'linked'});saved++;}
+        }catch(err){item.reason=[item.reason,err.message].filter(Boolean).join(' ');}
+        continue;
+      }
       if(item.type!=='ready')continue;
       try{
         if(!archives.has(item.file)){
@@ -308,7 +371,6 @@
   function lookup() {
     const query = norm(byId('caseSearch').value);
     const vendor = byId('caseVendor').value;
-    const mode = byId('caseStateFilter').value;
     const documents = byId('caseDocumentFilter').value;
     const first = Number(byId('caseFirstRow').value) || 0;
     const last = Number(byId('caseLastRow').value) || Infinity;
@@ -318,13 +380,6 @@
       if(query&&!meta.search.some(v=>v.includes(query)))return false;
       if(vendor&&!meta.vendors.includes(vendor))return false;
       if(documents&&documentFlag(c,vendor)!==documents)return false;
-      if(mode==='selected')return selected.has(c.id);
-      if(mode){
-        const flags=billFlags(c,vendor);
-        if(mode==='ready')return flags.includes('可填請款');
-        if(mode==='claimed')return flags.includes('已回填請款');
-        if(mode==='check')return flags.some(flag=>!['可填請款','已回填請款'].includes(flag));
-      }
       return true;
     });
   }
@@ -354,7 +409,6 @@
   }
   function renderSelection(count) {
     if(count===undefined)scheduleOrderPreview();
-    if(count===undefined&&byId('caseStateFilter').value==='selected'){renderList();return;}
     byId('caseCount').textContent=`共 ${state.cases.length} 案｜符合 ${count??lookupCount} 案｜已勾選 ${selected.size} 案`;
     byId('caseSelectedCount').textContent='已勾選 '+selected.size+' 案';
     byId('caseBatchActions').hidden=!selected.size;
@@ -380,56 +434,14 @@
       row.classList.toggle('case-active',row.dataset.caseRow===current);
     }
   }
-  function comparePos(entry, choice) {
-    const reference = entry.candidates.find(c => 'case:' + c.id === choice) || entry.candidates[0];
-    const before = reference?.pos || entry.earlier, after = entry.pos;
-    const fields = [
-      ['報價單號', 'quote'], ['SHOP ID', 'shopId'], ['商家名稱', 'merchant'],
-      ['收件人', 'contact'], ['電話', 'phone'], ['地址', 'address'],
-      ['設備請款單號', 'request'], ['裝機請款單號', 'installRequest'],
-      ['華茂下單日期', 'hmDate'], ['峰潮下單日期', 'peakDate'], ['拍檔下單日期', 'partnerDate'], ['備註', 'notes']
-    ].map(([label, key]) => [label, before[key], after[key]]);
-    const equipment = p => p.devices.map(d => '設備'+d.slot+' '+d.raw+' × '+(d.qty ?? '待確認')).join('、');
-    fields.push(['設備與數量', equipment(before), equipment(after)],
-      ['數量格式待核對', before.issues.join('、'), after.issues.join('、')]);
-    const same = [], different = [];
-    for(const [label, oldValue, newValue] of fields){
-      if(!oldValue && !newValue) continue;
-      if(oldValue===newValue) same.push(label);
-      else different.push(`<li><strong>${label}</strong> ${e(oldValue || '空白')} → ${e(newValue || '空白')}</li>`);
-    }
-    const rowLabel = reference ? '工作區原第 ' : '本次範圍前一筆相符資料，第 ';
-    return `<p class="case-meta">比對來源：${rowLabel}${before.row} 列</p>
-      <p><strong>相同</strong>　${same.join('、') || '無相同的非空白欄位'}</p>
-      <div class="case-differences"><strong>不同</strong>
-        ${different.length ? '<ul>'+different.join('')+'</ul>' : '<p>欄位內容相同，請確認是否為重複登錄。</p>'}
-      </div>`;
-  }
   function renderPreview() {
     const node = byId('casePreview');
     node.hidden = !staged;
     if (!staged) { node.innerHTML = ''; return; }
-    const {name,type,rows,page,choices,items,counts}=staged;
+    const {name,type,rows,page,choices,items}=staged;
     const start=page*previewSize,end=Math.min(start+previewSize,items.length);
     let contents='';
-    if(type==='pos'){
-      contents=`<p class="case-meta">本次範圍：Excel 第 ${staged.from} 至 ${staged.to} 列</p>
-        <p>新增 ${counts.new} 筆，重複 ${counts.same} 筆，需決定 ${counts.conflict} 筆。${counts.same?' 已辨識為同一筆來源資料的列將略過。':''}</p>
-        ${items.length?`<div class="case-actions">
-        <button type="button" class="case-btn" data-case-action="pos-add-all">全部視為新增另一批次</button>
-        <button type="button" class="case-btn" data-case-action="pos-skip-all">全部暫不匯入</button></div>`:''}
-        <p id="casePosDecisions" role="status">${posDecisions()}</p>`;
-      for(const index of items.slice(start,end)){
-        const entry=rows[index];
-        const value=choices.get(index)||'add';
-        contents+=`<div class="case-conflict"><strong>${e(entry.pos.quote)} ${e(entry.pos.merchant)}・新檔第 ${entry.pos.row} 列</strong>
-          <div data-candidate="${index}">${comparePos(entry,value)}</div>
-          <label>處理方式<select data-choice="${index}">
-            ${option('skip','暫不匯入',value)}${option('add','新增另一批次',value)}
-            ${entry.candidates.map(c=>option('case:'+c.id,'更新原第 '+c.pos.row+' 列',value)).join('')}
-          </select></label></div>`;
-      }
-    }else if(type==='request'){
+    if(type==='request'){
       contents=`<p>共 ${rows.length} 筆，已勾選 <span id="casePickedRequests">${choices.size}</span> 筆。請核對後套用到目前案件。</p>
         <div class="case-preview-scroll">${items.slice(start,end).map(i=>{
           const r=rows[i];
@@ -445,28 +457,8 @@
       <button type="button" class="case-btn" data-case-action="preview-next" ${end===items.length?'disabled':''}>預覽下一頁</button>
       </div>`;
     node.innerHTML = `<strong>${e(name)}</strong>${contents}<div class="case-actions">
-      <button type="button" class="case-btn primary" data-case-action="commit">${uiIcon('check')} ${type==='pos'?'確認匯入':'套用匯入'}</button>
+      <button type="button" class="case-btn primary" data-case-action="commit">${uiIcon('check')} 套用匯入</button>
       <button type="button" class="case-btn" data-case-action="cancel">取消</button></div>`;
-  }
-  function posDecisions() {
-    const {counts,items,rows,choices}=staged;
-    let added=counts.new, skipped=counts.same, updated=0, issues=0;
-    for(const i of items){
-      const value=choices.get(i)||'add';
-      if(value==='add')added++;
-      else if(value==='skip')skipped++;
-      else updated++;
-    }
-    for(const [i,row] of rows.entries()){
-      if(row.type!=='same'&&choices.get(i)!=='skip'&&row.pos.issues.length)issues++;
-    }
-    return `預計新增 ${added} 筆｜略過 ${skipped} 筆｜更新 ${updated} 筆｜數量異常 ${issues} 筆`;
-  }
-  function setPosChoices(value,button) {
-    if(staged?.type!=='pos')return;
-    for(const index of staged.items)staged.choices.set(index,value);
-    renderPreview();
-    byId('casePreview').querySelector('[data-case-action="'+button+'"]')?.focus();
   }
   function quotationForm(p) {
     return `<section class="case-section"><h4>內部系統報價單 PDF</h4>
@@ -739,9 +731,9 @@
     posImport=null;
     byId('casePosRange').hidden=true;
   }
-  function preparePosRange(name, rows, quick) {
+  function preparePosRange(name, rows) {
     const first=rows[0].row, last=rows.at(-1).row;
-    posImport={name,rows,first,last,quick};
+    posImport={rows,first,last};
     for(const [id,value] of [['casePosFrom',first],['casePosTo',last]]){
       const input=byId(id);
       input.min=first; input.max=last; input.value=String(value);
@@ -753,7 +745,7 @@
   }
   async function applyPosRange() {
     if(!posImport) return;
-    const {name,rows,first,last,quick}=posImport;
+    const {rows,first,last}=posImport;
     const from=Number(byId('casePosFrom').value), to=Number(byId('casePosTo').value);
     staged=null;
     renderPreview();
@@ -762,21 +754,37 @@
     }
     const within=rows.filter(p=>p.row>=from&&p.row<=to);
     if(!within.length)throw Error('選定的列範圍沒有可匯入的資料。');
-    const preview=Cases.previewPos(state,within);
-    const counts={new:0,same:0,conflict:0},items=[];
-    preview.forEach((r,i)=>{counts[r.type]++;if(r.type==='conflict')items.push(i);});
-    staged={type:'pos',name,rows:preview,page:0,counts,items,choices:new Map(),from,to};
-    if(quick&&!items.length)return commit();
-    renderPreview();
-    byId('casePreview').scrollTop=0;
-    byId('casePreview').focus?.();
-    status('請核對預覽，再按「確認匯入」。');
+    const result=Cases.commitPos(state,Cases.previewPos(state,within));
+    afterPosCommit(result);
+    clearPosFile();
+    render();
+    status(posSummary(result),false,{tone:result.archived?'warning':'success'});
+    await runQueuedFiles();
   }
-  async function importExcel(file, type, quick=false) {
+  function posSummary(result){
+    const base=`即時庫存已匯入。新增 ${result.new} 筆｜更新 ${result.update} 筆｜相同略過 ${result.same} 筆`;
+    return base+(result.duplicates?'｜整併同列舊案件 '+result.duplicates+' 筆':'')+
+      (result.archived?'｜舊附件或請款資料另存 '+result.archived+' 筆':'');
+  }
+  function afterPosCommit(result){
+    for(const [from,to] of result.removed){
+      if(selected.delete(from))selected.add(to);
+      if(current===from)current=to;
+    }
+    for(const id of result.reassigned){
+      selected.delete(id);
+      if(current===id)current='';
+    }
+    if(result.new||result.update||result.duplicates)changed();
+    indexCases();
+    indexBills();
+  }
+  async function importExcel(file, type) {
     if (!file) return;
-    recordActivity('案件工作台讀取「'+file.name+'」。');
+    recordActivity('主控台讀取「'+file.name+'」。');
     const c = order();
     clearPosFile();
+    if(byId('caseSourceMenu'))byId('caseSourceMenu').open=false;
     staged = null;
     renderPreview();
     const token=++stageToken;
@@ -787,7 +795,7 @@
     }
     const projected=await ImportIO.excel(file,type,vendor);
     if(token!==stageToken)return;
-    if(type==='pos'){preparePosRange(file.name,projected,quick);return;}
+    if(type==='pos'){preparePosRange(file.name,projected);return;}
     const data=type==='sap'?projected:null;
     let rows=type==='sap'?data.rows:projected;
     if(type==='request'){
@@ -812,12 +820,6 @@
     // Only the branches touched by the import need an isolated copy.
     const clone=value=>typeof structuredClone==='function'?structuredClone(value):JSON.parse(JSON.stringify(value));
     const next={...state};
-    if(type==='pos'){
-      const updates=new Set([...choices.values()].filter(v=>v.startsWith('case:')).map(v=>v.slice(5)));
-      next.cases=state.cases.map(c=>updates.has(c.id)?clone(c):c);
-      if(updates.size)next.invoices=state.invoices.map(inv=>inv.links.some(l=>updates.has(l.caseId))?clone(inv):inv);
-      Cases.commitPos(next,rows,choices);
-    }
     if (type === 'sap') next.sap = data;
     if (type === 'quote') {
       next.quotes=state.quotes.slice();
@@ -849,23 +851,10 @@
     Cases.restore(next);
     state = next;
     showOrders=false;
-    if(type==='pos')clearPosFile();
     staged = null;
     changed();
     render();
     status('已確認匯入「'+name+'」。',false,{tone:'success'});
-    if(type==='pos')await runQueuedFiles();
-  }
-  const workSnapshot = () => ({data:state, selected:[...selected]});
-  function downloadWork() {
-    const blob = new Blob([JSON.stringify(workSnapshot(), null, 2)], {type: 'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'POS案件工作檔_' + formatToday() + '.json';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    saved();
-    status('已要求下載案件工作檔。',false,{tone:'success'});
   }
   function restoreWorkspace(work) {
     state = work.data;
@@ -881,11 +870,10 @@
   }
   async function loadWork(file) {
     validateFile(file, ['json']);
-    if (dirty && !confirm('目前有未下載的更新。載入工作檔並取代目前工作區？')) return;
+    if((state.cases.length||state.quotes.length||state.sap)&&!confirm('以舊版案件備份取代目前工作資料？'))return;
     const work=await ImportIO.excel(file,'work');
     restoreWorkspace(work);
-    saved();
-    cloud?.changed();
+    changed();
     status('已載入 ' + state.cases.length + ' 個案件。',false,{tone:'success'});
     await runQueuedFiles();
   }
@@ -1054,11 +1042,6 @@
     changed(); render(); status('已加入附件參考。');
   }
   root.addEventListener('input',event=>{
-    if(staged?.type==='pos'&&['casePosFrom','casePosTo'].includes(event.target.id)){
-      staged=null;
-      renderPreview();
-      status('列範圍已變更，請重新套用。',false,{notify:false});
-    }
     if(event.target.form?.id==='caseQuotationForm')clearQuoteResult();
     if(!event.isComposing&&['caseSearch','caseFirstRow','caseLastRow'].includes(event.target.id))scheduleFilter();
   });
@@ -1079,7 +1062,6 @@
     if (upload) {
       target.value = '';
       if (files[target.id]) action(() => importExcel(upload, files[target.id]));
-      if (target.id === 'caseWork') action(() => loadWork(upload));
       if (target.id === 'caseSapPrices') action(() => importSapPrices(upload));
       if(target.dataset?.docVendor)action(()=>readVendorDocument(upload,target.dataset.docVendor,target.dataset.docKind,target.dataset.docReplace));
       if (target.id === 'caseDocument') action(() => readDoc(upload));
@@ -1091,13 +1073,6 @@
     } else if (target.dataset.select) {
       if (target.checked) selected.add(target.dataset.select); else selected.delete(target.dataset.select);
       changed(); renderSelection();
-    } else if(staged&&target.dataset.choice!==undefined){
-      const i=Number(target.dataset.choice);
-      staged.choices.set(i,target.value);
-      const entry=staged.rows[i];
-      const comparison=byId('casePreview').querySelector('[data-candidate="'+i+'"]');
-      if(comparison)comparison.innerHTML=comparePos(entry,target.value);
-      byId('casePosDecisions').textContent=posDecisions();
     } else if(staged&&target.dataset.requestChoice!==undefined){
       const i=Number(target.dataset.requestChoice);
       if(target.checked)staged.choices.set(i,true);else staged.choices.delete(i);
@@ -1112,7 +1087,7 @@
       changed();
       const line = target.closest('.case-message').querySelector('[data-order="line"]');
       line.checked = Boolean(s.line); line.disabled = !s.email;
-    } else if (['caseVendor','caseStateFilter','caseDocumentFilter'].includes(target.id)) {
+    } else if (['caseVendor','caseDocumentFilter'].includes(target.id)) {
       filterPage = 0; renderList();
     } else if(target.form?.id==='caseInvoiceForm'&&target.name==='vendor'){
       const {elements,dataset}=target.form;
@@ -1199,8 +1174,6 @@
       'apply-pos-range':applyPosRange,
       'clear-queued-files':()=>{queuedFiles=[];renderQueue();},
       'download-vendor-batch':downloadVendorBatch,
-      'pos-add-all':()=>setPosChoices('add','pos-add-all'),
-      'pos-skip-all':()=>setPosChoices('skip','pos-skip-all'),
       'clear-pos-file':()=>{clearPosFile();staged=null;renderPreview();status('已取消選檔。');},
       commit, cancel: () => { staged = null; renderPreview(); },
       prev: () => { filterPage--; renderList(); }, next: () => { filterPage++; renderList(); },
@@ -1210,7 +1183,6 @@
       review: () => { order().review = false; changed(); render(); },
       'select-filter': () => { for(const c of lookup()) selected.add(c.id); changed(); renderSelection(); },
       'clear-select': () => { selected.clear(); changed(); renderSelection(); },
-      save: downloadWork,
       'export-selected':async()=>{
         const exportBook=exports[byId('caseExportKind').value];
         if(!exportBook)throw Error('請選擇匯出格式。');
@@ -1298,18 +1270,23 @@
     drop.classList.remove('is-dragging');
     if(!busy)action(()=>importBatch(Array.from(event.dataTransfer.files)));
   });
-  if (typeof initDriveSync==='function') cloud = initDriveSync({
-    snapshot:workSnapshot,
-    hasWork:()=>Boolean(state.cases.length || state.invoices.length || state.quotes.length || state.sap),
-    canReplace:()=>!busy && !staged && !posImport && !queuedFiles.length && !vendorPreview,
-    validateWork:work=>{
-      if (!work || !Array.isArray(work.selected)) throw Error('雲端工作檔格式不符。');
-      return {data:Cases.restore(work.data),selected:work.selected};
-    },
-    restore:restoreWorkspace,
-    onSaved:()=>saved('案件工作檔已同步'),
-    onRestored:()=>status('已從 Google Drive 載入 '+state.cases.length+' 個案件。',false,{tone:'success'}),
-    onError:message=>reportOperation(message,'error','Google Drive 同步')
+  if(globalThis.indexedDB)action(async()=>{
+    const work=await localWork('readonly');
+    if(!work)return;
+    workRevision=work.revision??0;
+    restoreWorkspace({...work,data:Cases.restore(work.data)});
+    byId('caseSaveState').textContent='已載入此瀏覽器的工作資料';
+  });
+  const sourceMenu=byId('caseSourceMenu');
+  document.addEventListener?.('click',event=>{
+    if(sourceMenu?.open&&!sourceMenu.contains(event.target))sourceMenu.open=false;
+  });
+  sourceMenu?.addEventListener?.('keydown',event=>{
+    if(event.key==='Escape'&&sourceMenu.open){
+      event.stopPropagation();
+      sourceMenu.open=false;
+      sourceMenu.querySelector('summary').focus();
+    }
   });
   render();
   root.setAttribute?.('data-ready','');

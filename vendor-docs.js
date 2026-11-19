@@ -84,6 +84,7 @@ const VendorDocs = (() => {
     }
     const monetaryEnd = note ? (columns[amountIndex].x + columns[amountIndex].width + note.x)/2 : Infinity;
     const result=[];
+    let lastNameRow;
     for(let i=header+1;i<page.length;i++){
       const row=page[i], raw=line(row), t=compact(raw);
       if(/銷售額合計|發票日期[:：]|本幣小計|原幣小計|由\d+\/|單據編號[:：]/.test(t))break;
@@ -91,10 +92,17 @@ const VendorDocs = (() => {
       const n=row.filter(c=>c.x>=quantity.x-8&&(!sale||vendor!=='拍檔'?c.x+c.width/2<monetaryEnd:true)).map(c=>number(c.text)).filter(v=>v!==null);
       const expected=sale&&vendor==='華茂'?4:3;
       if(!left.length)continue;
-      if(!sale&&vendor==='拍檔'&&!n.length&&result.length&&/^[A-Z0-9][A-Z0-9./+ -]*$/i.test(line(left))){
+      const name=line(left);
+      const huamaoWrap=vendor==='華茂'&&lastNameRow&&lastNameRow.index===i-1&&
+        row.length===left.length&&Math.abs(left[0].x-lastNameRow.x)<=2&&
+        lastNameRow.y-left[0].y>2&&lastNameRow.y-left[0].y<=15&&
+        /[（(][^）)]*$/.test(result.at(-1).name)&&/^[^（(]*[）)]$/.test(name);
+      const partnerWrap=vendor==='拍檔'&&/^[A-Z0-9][A-Z0-9./+ -]*$/i.test(name);
+      if(!sale&&!n.length&&result.length&&(huamaoWrap||partnerWrap)){
         const previous=result.at(-1);
-        previous.name+=' '+line(left);
+        previous.name+=(huamaoWrap&&/\p{Script=Han}$/u.test(previous.name)&&/^\p{Script=Han}/u.test(name)?'':' ')+name;
         previous.raw+=' / '+raw;
+        lastNameRow={index:i,x:left[0].x,y:left[0].y};
         continue;
       }
       const position = sale ? number(left[0].text) : null;
@@ -129,6 +137,7 @@ const VendorDocs = (() => {
         warnings.push('有品項的名稱或數量待確認。');continue;
       }
       result.push(item);
+      lastNameRow={index:i,x:left[0].x,y:left[0].y};
     }
     return result;
   }
@@ -361,7 +370,7 @@ const VendorDocs = (() => {
       if(automatic&&same&&!same.links.some(l=>l.caseId===order.id))
         throw Error('發票已關聯其他採購批次。');
       const invoice=Cases.attachInvoice(state,order,{vendor:doc.vendor,no:doc.invoiceNo,date:doc.invoiceDate,net:doc.net,tax:doc.tax,gross:doc.gross,source:doc.name});
-      if(automatic&&!same&&!order.review&&!order.pos.issues.length)invoice.links[0].confirmed=true;
+      if(automatic&&!metadata.requiresReview&&!same&&!order.review&&!order.pos.issues.length)invoice.links[0].confirmed=true;
     }
     const attachment={key:doc.key,name:doc.name,kind:doc.kind,vendor:doc.vendor,summary:doc.id,parsed:doc,...metadata};
     if(prior)order.docs.splice(order.docs.indexOf(prior),1,attachment);
@@ -424,6 +433,11 @@ const VendorDocs = (() => {
   }
   const itemKey = ({name,quantity}) => recordKey(textId(name),quantity);
   const itemsKey = doc => doc.items.map(itemKey).sort().join('\n');
+  const connectorDifference='同型號錢櫃的接頭規格不同（RJ11／RJ12）';
+  const comparableHuamaoItems = doc => doc.items.map(item =>
+    /\bHS-410A\b/i.test(item.name)
+      ? itemKey({...item,name:item.name.replace(/\bRJ1[12]\b/gi,'RJXX').replace(/\((?:8C\/4B|標準)\)/gi,'')})
+      : itemKey(item)).sort().join('\n');
   function differences(a,b) {
     const hard=[], notes=[];
     for(const [field,label] of [['sellerId','賣方統編'],['buyerId','買方統編']]){
@@ -440,7 +454,10 @@ const VendorDocs = (() => {
       const days=(Date.parse(invoice.invoiceDate)-Date.parse(shipment.shipDate))/86400000;
       if(days<0||days>7)notes.push('出貨與發票日期有差異');
     }
-    if(a.items.length&&b.items.length&&itemsKey(a)!==itemsKey(b))notes.push('品項名稱或數量不同');
+    if(a.items.length&&b.items.length&&itemsKey(a)!==itemsKey(b)){
+      notes.push(a.vendor==='華茂'&&comparableHuamaoItems(a)===comparableHuamaoItems(b)?
+        connectorDifference:'品項名稱或數量不同');
+    }
     return {hard,notes};
   }
   function signature(doc) {
@@ -642,8 +659,9 @@ const VendorDocs = (() => {
   function saveDecision(state,order,decision,archiveKey='') {
     if(decision.type!=='ready'||decision.caseId!==order.id)throw Error('此文件沒有可確認的案件關聯。');
     const {doc,pair}=decision;
-    const useInvoice=doc.invoiceReady&&!pair.issues.length;
-    save(state,order,doc,'',useInvoice,true,{pair,archiveKey});
+    const requiresReview=pair.issues.length>0;
+    const useInvoice=doc.invoiceReady&&pair.issues.every(issue=>issue===connectorDifference);
+    save(state,order,doc,'',useInvoice,true,{pair,archiveKey,...requiresReview&&{requiresReview}});
     for(const stored of documents(order)){
       if(pair.related.includes(stored.key)){
         const related=new Set([...(stored.pair?.related||[]),doc.key]);
@@ -651,6 +669,26 @@ const VendorDocs = (() => {
         stored.pair={...pair,related:[...related],issues:[...issues]};
       }
     }
+  }
+  async function refreshInvoice(state,doc,file){
+    if(doc.vendor!=='華茂'||doc.kind!=='發票'||!doc.invoiceReady)return null;
+    const candidates=state.cases.flatMap(order=>documents(order)
+      .filter(stored=>stored.key===doc.key&&stored.archiveKey&&!stored.parsed.invoiceReady&&
+        stored.parsed.warnings.includes('有品項的數量或金額欄位無法可靠辨識。'))
+      .map(stored=>({order,stored})));
+    if(candidates.length!==1)return null;
+    const [{order,stored}]=candidates;
+    if(await fileKey(file)!==stored.archiveKey)return null;
+    const slips=documents(order).filter(item=>item.kind==='銷貨單'&&filingKey(item.parsed)===filingKey(doc));
+    if(slips.length!==1)return null;
+    const [slip]=slips, diff=differences(slip.parsed,doc);
+    if(diff.hard.length||diff.notes.some(issue=>issue!==connectorDifference))return null;
+    const priorIssues=(stored.pair?.issues||[]).filter(issue=>issue!=='品項名稱或數量不同');
+    if(priorIssues.some(issue=>issue!==connectorDifference))return null;
+    const pair={key:filingKey(doc),related:[slip.key],issues:diff.notes,orderFallback:''};
+    save(state,order,doc,stored.key,true,true,{pair,archiveKey:stored.archiveKey,requiresReview:Boolean(diff.notes.length)});
+    slip.pair={...pair,related:[doc.key]};
+    return {caseId:order.id,pair,reason:diff.notes.join('；')};
   }
   function archiveRequest(mode,run) {
     if(!globalThis.indexedDB)throw Error('此瀏覽器無法使用原始 PDF 儲存空間。');
@@ -670,9 +708,12 @@ const VendorDocs = (() => {
       };
     });
   }
-  async function archive(file) {
+  async function fileKey(file) {
     const digest=await crypto.subtle.digest('SHA-256',await readArrayBuffer(file));
-    const key=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+    return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  async function archive(file) {
+    const key=await fileKey(file);
     await archiveRequest('readwrite',store=>store.put(file,key));
     return key;
   }
@@ -680,5 +721,5 @@ const VendorDocs = (() => {
     if(!/^[a-f\d]{64}$/.test(key))throw Error('找不到原始 PDF。');
     return await archiveRequest('readonly',store=>store.get(key));
   }
-  return {kinds,read,readRecords,association,save,documents,pageLabel,invoiceFields,planBatch,saveDecision,archive,original};
+  return {kinds,read,readRecords,association,save,documents,pageLabel,invoiceFields,planBatch,saveDecision,refreshInvoice,archive,original};
 })();

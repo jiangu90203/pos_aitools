@@ -51,7 +51,7 @@ const Cases = (() => {
   };
   const hasVendor = (order, vendor) => order.pos.devices.some(d => vendorForItem(d.item) === vendor);
   const quoteKey = value => norm(value).replace(/^qu(?=\d{11}$)/, '');
-  const key = pos => JSON.stringify([quoteKey(pos.quote), norm(pos.shopId), norm(pos.merchant)]);
+  const posRowKey = pos => JSON.stringify([norm(pos.sheet || '下單設備資料'), pos.row]);
   const signature = ({source, sourceDigest, sheet, row, ...fields}) => JSON.stringify(fields);
   const purchaseGroup = p => norm(p.shopId) ? 'shop:'+norm(p.shopId) : norm(p.merchant) ? 'merchant:'+norm(p.merchant) : '';
   const populated = value => value !== undefined && value !== null && value !== '';
@@ -91,78 +91,107 @@ const Cases = (() => {
     }).filter(p => p.merchant || p.quote || p.devices.length);
   }
   function previewPos(state, rows) {
-    const index = new Map(), quotes = new Map(), groups = new Map();
-    for (const order of state.cases) {
-      const k = key(order.pos);
-      if (!index.has(k)) index.set(k, []);
-      index.get(k).push(order);
-      const g=purchaseGroup(order.pos);
-      if(g&&!groups.has(g))groups.set(g,order);
-      const q = quoteKey(order.pos.quote);
-      if (!q) continue;
-      if (!quotes.has(q)) quotes.set(q, []);
-      quotes.get(q).push(order);
+    const byRow=new Map(), groups=new Map(), protectedIds=new Set();
+    for(const invoice of state.invoices) for(const link of invoice.links) protectedIds.add(link.caseId);
+    for(const order of state.cases){
+      const k=posRowKey(order.pos), group=purchaseGroup(order.pos);
+      if(!byRow.has(k))byRow.set(k,[]);
+      byRow.get(k).push(order);
+      if(group&&!groups.has(group))groups.set(group,order);
     }
-    const seen = new Map();
-    return rows.map(pos => {
-      const k = key(pos);
-      const peers = index.get(k) || [];
-      const matching = peers.find(({pos:old})=>old.row===pos.row&&old.sheet===pos.sheet&&
-        signature(old)===signature(pos)&&(
-          (pos.sourceDigest&&pos.sourceDigest===old.sourceDigest)||
-          ((!pos.sourceDigest||!old.sourceDigest)&&pos.source===old.source)||Boolean(pos.request)
-        ));
-      const earlier = seen.get(k);
-      seen.set(k, pos);
-      if (matching) {
-        return {type: 'same', pos, old: matching};
-      }
-      const related = (quotes.get(quoteKey(pos.quote)) || []).filter(c =>
-        (pos.shopId && c.pos.shopId && norm(pos.shopId) === norm(c.pos.shopId)) ||
-        (pos.merchant && norm(pos.merchant) === norm(c.pos.merchant) && (!pos.shopId || !c.pos.shopId)));
-      const candidates = [...new Set([...peers, ...related])];
-      const relatedCase=groups.get(purchaseGroup(pos))||candidates[0];
-      if (candidates.length || earlier) return {type: 'conflict', pos, candidates, earlier, relatedCase};
-      return {type: 'new', pos, relatedCase};
+    for(const [k,orders] of byRow){
+      byRow.set(k,orders.slice().reverse().sort((a,b)=>evidence(b)-evidence(a)));
+    }
+    function evidence(order){
+      return (protectedIds.has(order.id)?4:0)+(order.docs.length?2:0)+
+        (Object.keys(order.sale).length||Object.keys(order.orders).length||Object.keys(order.bills).length?1:0);
+    }
+    return rows.map(pos=>{
+      const [old,...duplicates]=byRow.get(posRowKey(pos))||[];
+      const type=!old?'new':signature(old.pos)===signature(pos)?'same':'update';
+      return {type,pos,old,duplicates,relatedCase:groups.get(purchaseGroup(pos))};
     });
   }
-  function commitPos(state, preview, choices) {
-    const replaced = new Set();
-    const roots = new Map();
-    for (const [i,entry] of preview.entries()) {
-      const target=choices.get(i);
-      if(entry.type!=='conflict'||!target?.startsWith('case:'))continue;
-      const id=target.slice(5);
-      if(replaced.has(id)||!entry.candidates.some(c=>c.id===id)||!state.cases.some(c=>c.id===id))
-        throw Error('同一案件不可同時套用兩筆更新，且必須屬於候選案件。');
-      replaced.add(id);
-    }
-    preview.forEach((entry, i) => {
-      if (entry.type === 'new' || entry.type==='conflict'&&(!choices.has(i)||choices.get(i)==='add')) {
-        const batch=initCase(entry.pos), group=purchaseGroup(entry.pos), related=entry.relatedCase||roots.get(group);
+  function commitPos(state, preview) {
+    const counts={new:0,update:0,same:0,duplicates:0,archived:0};
+    const replacements=new Map(), removed=new Map(), invalidated=new Map(), archived=new Map(), reassigned=new Set(), additions=[];
+    const roots=new Map();
+    const incomingByRow=new Map(preview.map(entry=>[posRowKey(entry.pos),entry]));
+    for(const {type,pos,old,duplicates,relatedCase} of incomingByRow.values()){
+      counts[type]++;
+      for(const duplicate of duplicates){
+        removed.set(duplicate.id,old.id);
+        archived.set(duplicate.id,duplicate);
+        counts.duplicates++;
+      }
+      if(type==='same')continue;
+      if(type==='new'){
+        const batch=initCase(pos), group=purchaseGroup(pos), related=relatedCase||roots.get(group);
         batch.purchaseBatch={id:batch.id,parentCaseId:related?.purchaseBatch?.parentCaseId||related?.id||'',createdAt:new Date().toISOString()};
         if(group&&!roots.has(group))roots.set(group,batch);
-        state.cases.push(batch);
+        additions.push(batch);
+        continue;
       }
-      if (entry.type !== 'conflict' || !choices.get(i)?.startsWith('case:')) return;
-      const old = state.cases.find(c => c.id === choices.get(i).slice(5));
-      const before = old.pos;
-      old.pos = entry.pos;
-      const itemsChanged = JSON.stringify(before.devices) !== JSON.stringify(old.pos.devices) || before.merchant !== old.pos.merchant;
-      const deliveryChanged = itemsChanged || ['address', 'contact', 'phone'].some(field => before[field] !== old.pos[field]);
-      if (deliveryChanged) old.orders = {};
-      if (itemsChanged && (state.invoices.some(inv => inv.links.some(link => link.caseId === old.id)) || old.sale.lines?.length)) {
-        old.review = true;
-        const slots = new Set(old.pos.devices.filter(d => before.devices.some(o => o.slot === d.slot &&
-          o.item === d.item && o.qty === d.qty)).map(d => d.slot));
-        old.sale.lines = (old.sale.lines || []).filter(l => slots.has(l.slot));
-        for (const inv of state.invoices) for (const link of inv.links) {
-          if (link.caseId !== old.id) continue;
-          link.slots = link.slots.filter(slot => slots.has(slot));
-          link.confirmed = false;
+      const before=old.pos;
+      const identityChanged=[[before.merchant,pos.merchant],[before.shopId,pos.shopId]].some(([a,b])=>a&&b&&norm(a)!==norm(b))||
+        (before.quote&&pos.quote&&quoteKey(before.quote)!==quoteKey(pos.quote));
+      if(identityChanged){
+        reassigned.add(old.id);
+        archived.set(old.id,old);
+        replacements.set(old.id,{...initCase(pos),id:old.id});
+        continue;
+      }
+      const next={...old,pos};
+      const itemsChanged=JSON.stringify(before.devices)!==JSON.stringify(pos.devices);
+      const deliveryChanged=itemsChanged||['merchant','address','contact','phone'].some(field=>before[field]!==pos[field]);
+      if(deliveryChanged)next.orders={};
+      if(itemsChanged){
+        const slots=new Set(pos.devices.filter(d=>before.devices.some(o=>o.slot===d.slot&&o.item===d.item&&o.qty===d.qty)).map(d=>d.slot));
+        invalidated.set(old.id,slots);
+        next.sale={...old.sale,lines:(old.sale.lines||[]).filter(line=>slots.has(line.slot))};
+        if(old.sale.lines?.length||old.docs.length)next.review=true;
+      }
+      replacements.set(old.id,next);
+    }
+    if(archived.size||invalidated.size){
+      const historicalLinks=new Map(), invoices=[];
+      for(const inv of state.invoices){
+        const links=[];
+        for(const link of inv.links){
+          if(archived.has(link.caseId)){
+            if(!historicalLinks.has(link.caseId))historicalLinks.set(link.caseId,[]);
+            historicalLinks.get(link.caseId).push({...inv,links:[link]});
+          }else if(invalidated.has(link.caseId)){
+            links.push({...link,slots:link.slots.filter(slot=>invalidated.get(link.caseId).has(slot)),confirmed:false});
+            replacements.get(link.caseId).review=true;
+          }else links.push(link);
+        }
+        if(links.length)invoices.push({...inv,links});
+      }
+      state.invoices=invoices;
+      const history=[];
+      for(const [id,order] of archived){
+        const invoices=historicalLinks.get(id)||[];
+        if(invoices.length||order.docs.length||Object.keys(order.sale).length||Object.keys(order.orders).length||Object.keys(order.bills).length){
+          history.push({order,invoices,replacedAt:new Date().toISOString()});
         }
       }
-    });
+      counts.archived=history.length;
+      if(history.length)state.posHistory=[...(state.posHistory||[]),...history];
+    }
+    if(replacements.size||removed.size||additions.length){
+      state.cases=state.cases.filter(order=>!removed.has(order.id)).map(order=>{
+        const next=replacements.get(order.id)||order, parent=next.purchaseBatch?.parentCaseId;
+        if(!removed.has(parent))return next;
+        const replacement=removed.get(parent);
+        return {...next,purchaseBatch:{...next.purchaseBatch,parentCaseId:replacement===next.id?'':replacement}};
+      }).concat(additions.map(batch=>{
+        const replacement=removed.get(batch.purchaseBatch.parentCaseId);
+        if(replacement)batch.purchaseBatch.parentCaseId=replacement;
+        return batch;
+      }));
+    }
+    return {...counts,addedIds:new Set(additions.map(c=>c.id)),removed,reassigned};
   }
   function amount(value) {
     const valueText = clean(value).replace(/[,\s]/g, '');
@@ -489,12 +518,9 @@ const Cases = (() => {
   function fillSapOrderDates(row, pos={}) {
     const sources=[pos.hmDate,pos.peakDate,pos.partnerDate];
     const dates=sapOrderColumns.map((col,i)=>sapOrderDate(row[col])||sapOrderDate(sources[i]));
-    const [hm,peak,partner]=dates;
-    const fallback=[peak||partner,hm||partner,peak||hm];
     sapOrderColumns.forEach((column,i)=>{
       if(sapOrderDate(row[column])||isBlankRequestNo(row[column])||clean(row[column])==='0'){
-        const value=dates[i]||fallback[i];
-        if(value)row[column]=value;
+        row[column]=dates[i]||null;
       }
     });
     return row;
@@ -641,14 +667,15 @@ const Cases = (() => {
       caseIndex.get(k).push(c);
     }
     const blockedHistory = new Set();
+    const freightCandidates=new Map();
     for (const order of orders) {
       const p = order.pos, quote = quoteKey(p.quote), shop = norm(p.shopId);
       const report = s => notes.push([p.row, p.quote, p.merchant, s]);
       if (!quote) { report('缺報價單編號，請確認後再 Key-in'); continue; }
       const peers = caseIndex.get(quote).filter(c => !shop || !c.pos.shopId || norm(c.pos.shopId) === shop);
       const old = (historyIndex.get(quote) || []).filter(r => !shop || !r[1] || norm(r[1]) === shop);
-      if (p.issues.length || order.review || peers.length > 1) {
-        report(peers.length > 1 ? '同報價單有多筆可能的 POS 案件，ERP 歷史保留原列，新資料待確認分批歸屬' :
+      if (p.issues.length || order.review || peers.length > 1 && old.length) {
+        report(peers.length > 1 && old.length ? '同報價單有多筆可能的 POS 案件，ERP 歷史保留原列，新資料待確認分批歸屬' :
           '設備待核對，ERP 歷史保留原列：' + p.issues.join('；'));
         for (const r of old) if (!blockedHistory.has(r)) { rows.push(fillSapOrderDates(r.slice())); blockedHistory.add(r); }
         continue;
@@ -751,15 +778,41 @@ const Cases = (() => {
         const row=fillSapOrderDates(r.slice());
         const item=standardItem(row[13]);
         if (!(item===paperItem&&knownPaperBreakdown)) report('VK 原表有未對應的設備列，已保留 ERP 歷史');
-        if (item!==paperItem&&item) fillEquipmentPrices(row,item,report);
+        if (item!==paperItem&&item!=='運費'&&item) fillEquipmentPrices(row,item,report);
         caseRows.push({row,historical:true});
       }
       fillSapPaper(caseRows,p,devices,report,printerConflict);
       rows.push(...caseRows.map(({row})=>row));
+      if(newPaper.length&&!old.some(row=>clean(row[13])==='運費'||clean(row[4])==='運費')&&
+          peers.every(c=>!c.review&&!c.pos.issues.length&&c.pos.devices.every(d=>d.qty===0||
+            d.qty>0&&standardItem(clean(d.raw||d.item).normalize('NFKC'))===paperItem))){
+        const group=JSON.stringify([quote,...peers.map(c=>c.id)]);
+        if(!freightCandidates.has(group))freightCandidates.set(group,{pos:p,peers:peers.length,cases:new Map()});
+        freightCandidates.get(group).cases.set(order.id,caseRows.map(({row})=>row));
+      }
+    }
+    const freightAfter=new Map();
+    for(const {pos,peers,cases} of freightCandidates.values()){
+      if(cases.size!==peers)continue;
+      const lines=[...cases.values()].flat();
+      if(!lines.length||lines.some(row=>standardItem(row[13])!==paperItem))continue;
+      const amounts=lines.map(row=>{
+        const gross=sapNumeric(row[14]), qty=sapNumeric(row[15]);
+        return gross!==null&&qty>0?cents(gross)*qty:null;
+      });
+      const gross=amounts.reduce((sum,amount)=>sum+amount,0);
+      if(amounts.includes(null)||gross<=0||gross>cents(100000))continue;
+      const freight=Array(sapHeaders.length).fill(null);
+      Object.assign(freight,{1:pos.shopId||null,2:pos.quote,4:'運費',7:pos.merchant||null,13:'運費',14:150,15:1,16:143});
+      freightAfter.set(lines.at(-1),fillSapOrderDates(freight,pos));
     }
     if (!rows.length && !notes.length) throw Error('勾選的案件沒有可輸出的設備資料。');
     const book = XLSX.utils.book_new();
-    formatSapDates(addSheet(book, sapName, sapHeaders, rows), rows.length);
+    const output=rows.flatMap(row=>freightAfter.has(row)?[row,freightAfter.get(row)]:[row]);
+    formatSapDates(addSheet(book, sapName, sapHeaders, output), output.length);
+    if(output.length){
+      book.Workbook={Names:[{Name:'SAP_Copy_Range',Ref:"'"+sapName+"'!$A$2:$AC$"+(output.length+1)}]};
+    }
     const unique = [...new Map(notes.map(n => [JSON.stringify(n), n])).values()];
     if (unique.length) addSheet(book, '待確認', ['來源列', '報價單編號', '公司名稱', '待確認事項'], unique);
     appendVendorSheets(book,state,orders);
