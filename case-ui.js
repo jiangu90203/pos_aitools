@@ -22,6 +22,7 @@
   let quoteUrl='', orderFrame=0, orderDirty=true, ordersByVendor=new Map();
   let caseIndex = new Map(), indexedCases, billsByCase = new Map(), visibleCases = [], filterFrame = 0;
   let stageByCase = new Map();
+  let cloud;
   const order = () => caseIndex.get(current)?.record;
   function indexCases() {
     if(indexedCases===state.cases)return;
@@ -63,10 +64,11 @@
   const changed = () => {
     dirty = true;
     byId('caseSaveState').textContent = '有未下載的案件更新';
+    cloud?.changed();
   };
-  const saved = () => {
+  const saved = (message = '案件工作檔已就緒') => {
     dirty = false;
-    byId('caseSaveState').textContent = '案件工作檔已就緒';
+    byId('caseSaveState').textContent = message;
   };
   window.addEventListener('beforeunload', event => {
     if (dirty) { event.preventDefault(); event.returnValue = ''; }
@@ -76,7 +78,7 @@
     busy = true;
     byId('caseBusy').hidden = false;
     try { await fn(); } catch (err) { status(err.message || '操作失敗，請檢查資料。', true); }
-    finally { busy = false; byId('caseBusy').hidden = true; }
+    finally { busy = false; byId('caseBusy').hidden = true; cloud?.schedule(); }
   }
   function billFlags(c,vendor) {
     if(c.pos.issues.length||c.review)return ['待核對設備'];
@@ -854,8 +856,9 @@
     status('已確認匯入「'+name+'」。',false,{tone:'success'});
     if(type==='pos')await runQueuedFiles();
   }
+  const workSnapshot = () => ({data:state, selected:[...selected]});
   function downloadWork() {
-    const blob = new Blob([JSON.stringify({data: state, selected: [...selected]}, null, 2)], {type: 'application/json'});
+    const blob = new Blob([JSON.stringify(workSnapshot(), null, 2)], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'POS案件工作檔_' + formatToday() + '.json';
@@ -864,12 +867,8 @@
     saved();
     status('已要求下載案件工作檔。',false,{tone:'success'});
   }
-  async function loadWork(file) {
-    validateFile(file, ['json']);
-    if (dirty && !confirm('目前有未下載的更新。載入工作檔並取代目前工作區？')) return;
-    const work=await ImportIO.excel(file,'work');
-    const next=work.data;
-    state = next;
+  function restoreWorkspace(work) {
+    state = work.data;
     batchItems=[];pendingDocuments=[];batchView='';batchPage=0;showOrders=false;
     renderBatch();
     const ids = new Set(state.cases.map(c => c.id));
@@ -878,8 +877,15 @@
     clearPosFile();
     vendorPreview=null;
     current = ''; staged = null; filterPage = 0;
-    saved();
     render();
+  }
+  async function loadWork(file) {
+    validateFile(file, ['json']);
+    if (dirty && !confirm('目前有未下載的更新。載入工作檔並取代目前工作區？')) return;
+    const work=await ImportIO.excel(file,'work');
+    restoreWorkspace(work);
+    saved();
+    cloud?.changed();
     status('已載入 ' + state.cases.length + ' 個案件。',false,{tone:'success'});
     await runQueuedFiles();
   }
@@ -1291,6 +1297,19 @@
     event.preventDefault();
     drop.classList.remove('is-dragging');
     if(!busy)action(()=>importBatch(Array.from(event.dataTransfer.files)));
+  });
+  if (typeof initDriveSync==='function') cloud = initDriveSync({
+    snapshot:workSnapshot,
+    hasWork:()=>Boolean(state.cases.length || state.invoices.length || state.quotes.length || state.sap),
+    canReplace:()=>!busy && !staged && !posImport && !queuedFiles.length && !vendorPreview,
+    validateWork:work=>{
+      if (!work || !Array.isArray(work.selected)) throw Error('雲端工作檔格式不符。');
+      return {data:Cases.restore(work.data),selected:work.selected};
+    },
+    restore:restoreWorkspace,
+    onSaved:()=>saved('案件工作檔已同步'),
+    onRestored:()=>status('已從 Google Drive 載入 '+state.cases.length+' 個案件。',false,{tone:'success'}),
+    onError:message=>reportOperation(message,'error','Google Drive 同步')
   });
   render();
   root.setAttribute?.('data-ready','');

@@ -557,3 +557,12 @@ button:not(:disabled), summary { cursor:pointer; }
 @media(max-width:365px) {
   .erp-version { display:none; }
 }
+
+.drive-sync summary .case-meta { margin-inline-start:.6rem; font-weight:400; }
+.drive-sync [data-tone="error"] { color:var(--danger); }
+.drive-sync [data-tone="warning"] { color:var(--warning); }
+.drive-sync [data-tone="success"] { color:var(--success); }
+.drive-sync-body,.drive-sync-versions { display:grid; justify-items:start; gap:.5rem; padding:.65rem 0 .3rem; }
+.drive-sync-body > label,.drive-sync-versions > label { display:grid; gap:.3rem; width:min(100%,520px); }
+.drive-sync-body > a { color:var(--accent); }
+.drive-sync-body > p { margin:0; }
