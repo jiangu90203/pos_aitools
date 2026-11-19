@@ -267,8 +267,8 @@ const Cases = (() => {
     appendVendorSheets(book,state,orders,'拍檔',readyOnly?(order,doc)=>{
       const entries=invoiceLinks(state,order,'拍檔');
       const ready=entries.filter(({inv,link})=>isReady(billStatus(order,inv,link,entries)));
-      return ready.some(({inv})=>doc.invoiceNo===inv.no ||
-        Boolean(doc.shipNo&&order.docs.some(d=>d.parsed?.shipNo===doc.shipNo&&d.parsed.invoiceNo===inv.no&&d.kind==='發票')));
+      const invoice=VendorDocs.invoiceFields(state,order,doc,ready);
+      return !invoice.ambiguous&&ready.some(({inv})=>invoice.no===inv.no);
     }:undefined);
     return book;
   }
@@ -293,7 +293,8 @@ const Cases = (() => {
         const p=order.pos, base=[p.row,p.shopId,p.quote,p.merchant,d.vendor,d.kind,doc.id,d.name];
         const invoice=VendorDocs.invoiceFields(state,order,doc,byCase.get(order.id));
         files.push([...base,doc.shipNo,doc.shipDate,invoice.no,invoice.date,doc.orderNo,
-          doc.buyer,doc.shipCompany||doc.recipient,doc.net,doc.tax,doc.gross,doc.warnings.join('；'),VendorDocs.pageLabel(doc.pages)]);
+          doc.buyer,doc.shipCompany||doc.recipient,doc.net,doc.tax,doc.gross,
+          [...new Set([...doc.warnings,...(d.pair?.issues||[])])].join('；'),VendorDocs.pageLabel(doc.pages)]);
         for(const i of doc.items) items.push([...base,i.code,i.name,i.unit,i.quantity,i.unitPrice,i.net,i.gross,i.raw]);
       }
     }
@@ -315,7 +316,7 @@ const Cases = (() => {
         const hw = p.devices.filter(d => vendorForItem(d.item) === '華茂' && d.qty > 0);
         const estimated = hw.every(d => Object.hasOwn(COST, d.item)) ? hw.reduce((sum, d) => sum + d.qty * COST[d.item][0], 0) : null;
         const shipments=typeof VendorDocs==='undefined'?[]:VendorDocs.documents(order).filter(d=>
-          d.vendor==='華茂'&&d.kind==='銷貨單'&&d.parsed.invoiceNo&&d.parsed.invoiceDate);
+          d.vendor==='華茂'&&d.kind==='銷貨單'&&d.parsed.invoiceNo&&d.parsed.invoiceDate&&!d.pair?.issues?.length);
         const doc=shipments.length===1?shipments[0].parsed:null;
         rows.push([meta.payDate || payDate, '', doc?.invoiceNo||'', doc?.invoiceDate||'', desc(order, '華茂'), estimated, null, meta.paid ?? null,
           meta.statement || '',doc?'發票欄位取自銷貨單'+(doc.shipNo?' '+doc.shipNo:'')+'，金額依 POS 採購規則':
@@ -605,6 +606,17 @@ const Cases = (() => {
             Number.isInteger(d.slot) && d.slot > 0 && d.slot <= 5 && (d.qty === null || Number.isSafeInteger(d.qty) && d.qty > 0)) ||
           !Array.isArray(c.pos.issues) || !Array.isArray(c.docs) || !c.orders || !c.sale || !c.bills) throw Error('工作檔的案件資料不完整。');
       ids.add(c.id);
+      for(const doc of c.docs){
+        if(doc?.archiveKey&&!(typeof doc.archiveKey==='string'&&/^[a-f\d]{64}$/.test(doc.archiveKey)))
+          throw Error('工作檔的原始 PDF 索引格式不符。');
+        if(!doc?.pair)continue;
+        const {key,related,issues,orderFallback}=doc.pair;
+        let parts;
+        try{parts=JSON.parse(key);}catch{throw Error('工作檔的單據配對格式不符。');}
+        const textList=list=>Array.isArray(list)&&list.every(value=>typeof value==='string');
+        if(!textList(parts)||parts.length!==3||parts[0]!==doc.vendor||!textList(related)||!textList(issues)||
+            (orderFallback!==undefined&&typeof orderFallback!=='string'))throw Error('工作檔的單據配對格式不符。');
+      }
     }
     for (const inv of state.invoices) {
       const verified = invoiceData(inv);

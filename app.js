@@ -166,8 +166,9 @@ async function parseSalesPdfFiles(files){
           log(`銷貨單解析：${f.name} 第${rec.頁碼}頁｜${rec.公司名稱||rec.客戶名稱||'未抓到公司'}｜發票 ${rec.發票號碼||'未抓到'}｜日期 ${rec.發票日期||'未抓到'}｜總計 ${rec.總計||'未抓到'}`);
         }
       }
-    }catch(err){throw new Error(`銷貨單 ${f.name} 解析失敗：${err.message}；本次未匯出，請修正或移除該檔案後重試。`);}
+    }catch(err){log(`銷貨單解析失敗：${f.name}｜${err.message||err}`);}
   }
+  if(arr.length&&!out.length)throw Error('選取的銷貨單皆無法解析，本次未匯出。請查看處理紀錄，確認檔案為含文字層的銷貨單 PDF。');
   return out;
 }
 function salesRecordScore(merchant, record, amount=0, strict=false){
@@ -825,7 +826,7 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.8#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.10#${name}"></use></svg>`;
 }
 // Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {

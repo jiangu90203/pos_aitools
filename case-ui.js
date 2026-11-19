@@ -10,6 +10,7 @@
   let current = '', staged = null, filterPage = 0, busy = false, dirty = false, stageToken = 0;
   let posImport = null, vendorPreview = null;
   let batchItems=[], pendingDocuments=[], batchView='', batchPage=0, batchAffected=new Set();
+  let queuedFiles=[];
   let showOrders=false, detailOpener=null;
   const pageSize = 30, previewSize = 20, orderSize = 12;
   let quoteUrl='', orderFrame=0, orderDirty=true, ordersByVendor=new Map();
@@ -98,6 +99,7 @@
   function renderBatch(){
     batchAffected=new Set();
     const counts={linked:0,unmatched:0,duplicate:0,failed:0};
+    const issues=batchItems.filter(item=>item.type==='linked'&&item.reason);
     for(const item of batchItems){
       counts[item.type]++;
       if(item.type==='unmatched'&&item.doc)for(const id of item.matches||[]){
@@ -108,14 +110,14 @@
     const node=byId('caseBatchResults');
     node.hidden=!batchItems.length;
     if(node.hidden){node.innerHTML='';return;}
-    const items=batchItems.filter(item=>item.type===batchView);
+    const items=batchView==='issues'?issues:batchItems.filter(item=>item.type===batchView);
     const last=Math.max(0,Math.ceil(items.length/orderSize)-1);
     batchPage=Math.max(0,Math.min(batchPage,last));
     const slice=items.slice(batchPage*orderSize,(batchPage+1)*orderSize);
     node.innerHTML=`<div class="erp-batch-summary">
       <strong role="status">成功配對 ${counts.linked} 筆｜未找到對應案件 ${counts.unmatched} 筆｜文件重複 ${counts.duplicate} 筆｜解析失敗 ${counts.failed} 筆</strong>
-      ${Object.entries({unmatched:'查看未配對',duplicate:'查看重複文件',failed:'查看解析失敗'}).map(([key,label])=>
-        counts[key]?`<button type="button" class="case-btn" aria-pressed="${batchView===key}" data-batch-view="${key}">${label}</button>`:'').join('')}
+      ${Object.entries({unmatched:'查看未配對',duplicate:'查看重複文件',failed:'查看解析失敗',issues:'查看配對提醒（'+issues.length+'）'}).map(([key,label])=>
+        (counts[key]||key==='issues'&&issues.length)?`<button type="button" class="case-btn" aria-pressed="${batchView===key}" data-batch-view="${key}">${label}</button>`:'').join('')}
     </div>
     ${slice.length?`<ul class="erp-batch-list">${slice.map(item=>`<li><div><strong>${e(item.name)}</strong>
       ${item.pages?.length?`<span>第 ${item.pages.join('、')} 頁</span>`:''}
@@ -126,10 +128,35 @@
       <span>${batchPage+1} ／ ${last+1} 頁</span>
       <button type="button" class="case-btn" data-batch-page="1" ${batchPage===last?'disabled':''}>下一頁</button></div>`:''}`;
   }
+  function renderQueue() {
+    byId('caseBatchQueue').hidden=!queuedFiles.length;
+    byId('caseBatchQueueStatus').textContent=queuedFiles.length?
+      `已選 ${queuedFiles.length} 份 PDF，匯入 POS 或載入工作檔後會自動核對。`:'';
+  }
+  async function importBatch(files) {
+    const workbooks=files.filter(file=>/\.xlsx?$/i.test(file.name));
+    if(workbooks.length>1)throw Error('每批可選一份 POS Excel 與多份 PDF。請重新選擇檔案。');
+    const [workbook]=workbooks;
+    const documents=files.filter(file=>file!==workbook);
+    if(workbook||posImport||!state.cases.length){
+      if(workbook)await importExcel(workbook,'pos',true);
+      queuedFiles.push(...documents);
+      renderQueue();
+      if(!posImport)status('請加入一份 POS Excel 或載入工作檔，系統會接續核對已選 PDF。');
+      return;
+    }
+    await runBatch(documents);
+  }
+  async function runQueuedFiles() {
+    if(!state.cases.length||!queuedFiles.length&&!pendingDocuments.length)return;
+    const files=queuedFiles;
+    queuedFiles=[];
+    renderQueue();
+    await runBatch(files);
+  }
   async function runBatch(files,vendor,kind) {
-    if(!files.length)return;
-    if(!state.cases.length)throw Error('請先載入工作檔，或匯入 POS 設備即時庫存以建立案件。');
-    batchItems=pendingDocuments;
+    if(!files.length&&!pendingDocuments.length)return;
+    batchItems=[...pendingDocuments];
     batchView=''; batchPage=0;
     for(const [i,file] of files.entries()){
       status(`讀取文件 ${i+1} ／ ${files.length}`);
@@ -137,7 +164,7 @@
       try{
         const records=await VendorDocs.readRecords(file,vendor,kind);
         for(const record of records){
-          batchItems.push({name:file.name,pages:record.pages,doc:record.doc,
+          batchItems.push({name:file.name,pages:record.pages,doc:record.doc,file:record.doc?file:null,
             type:record.error?'failed':'',reason:record.error?.message||''});
         }
       }catch(err){
@@ -147,11 +174,17 @@
     const items=batchItems.filter(item=>item.doc);
     const plan=VendorDocs.planBatch(state,items.map(item=>item.doc));
     let saved=0, sliceStart=performance.now();
+    const archives=new Map();
     for(const [i,item] of items.entries()){
       Object.assign(item,plan[i]);
       if(item.type!=='ready')continue;
       try{
-        VendorDocs.save(state,caseIndex.get(item.caseId).record,item.doc,'',item.doc.invoiceReady,true);
+        if(!archives.has(item.file)){
+          archives.set(item.file,await VendorDocs.archive(item.file).catch(()=> ''));
+        }
+        const archiveKey=archives.get(item.file);
+        VendorDocs.saveDecision(state,caseIndex.get(item.caseId).record,item,archiveKey);
+        if(!archiveKey)item.reason=[item.reason,'瀏覽器無法保存原始 PDF。請保留原始檔案。'].filter(Boolean).join(' ');
         item.type='linked';
         saved++;
       }catch(err){
@@ -161,6 +194,7 @@
       if(performance.now()-sliceStart>12){await yieldUI();sliceStart=performance.now();}
     }
     pendingDocuments=batchItems.filter(item=>item.type==='unmatched'&&item.doc?.key);
+    for(const item of batchItems)if(item.type!=='unmatched')delete item.file;
     if(saved)changed();
     renderBatch();
     render();
@@ -369,9 +403,10 @@
           <strong>${e(vendor+' '+kind)}</strong>
           <div class="case-meta">${canImport?(entries.length?'已保存 '+entries.length+' 份':'尚未匯入'):'此案件沒有此廠商的設備'}</div>
           ${entries.map(d=>`<div class="case-doc-saved"><strong>${e(d.name)} · PDF</strong>
-            <span class="case-meta">${e(d.parsed.id)} · ${d.parsed.warnings.length?'部分欄位待核對':'已配對'}</span>
+            <span class="case-meta">${e(d.parsed.id)} · ${d.parsed.warnings.length||d.pair?.issues?.length?'部分欄位待核對':'已配對'}</span>
             <div class="case-actions">
             <button type="button" class="case-btn" data-doc-inspect="${e(d.key)}">查看結果</button>
+            ${d.archiveKey?`<button type="button" class="case-btn" data-doc-download="${e(d.key)}">下載原始 PDF</button>`:''}
             <button type="button" class="case-btn" data-doc-remove="${e(d.key)}">${uiIcon('trash')} 移除</button>
             </div>${vendorFileControl(vendor,kind,'替換這份文件',d.key,!canImport)}</div>`).join('')}
           </div>`;
@@ -392,21 +427,26 @@
         <p class="${pending.error?'case-warning':'case-meta'}">${e(pending.error||'正在解析 PDF…')}</p></div>`;return;
     }
     const d=pending.doc;
+    const stored=pending.saved?VendorDocs.documents(c).find(ref=>ref.key===d.key):null;
+    const warnings=[...new Set([...d.warnings,...(stored?.pair?.issues||[])])];
+    const matchKey=stored?.pair?.key?JSON.parse(stored.pair.key).slice(1).join(' '):'';
     const invoice=VendorDocs.invoiceFields(state,c,d);
     let evidence=[], problem='';
     try{evidence=VendorDocs.association(state,c,d);}
     catch(err){problem=err.message;}
     const fields=[['文件單號',d.id],['銷貨／出貨單號',d.shipNo],['銷貨／出貨日期',d.shipDate],
       ['發票號碼',invoice.no],['發票日期',invoice.date],['廠商訂單單號',d.orderNo],
-      ['帳款客戶',d.buyer],['收件／轉寄資訊',d.recipient],['未稅',d.net],['稅額',d.tax],['含稅',d.gross]];
+      ['帳款客戶',d.buyer],['買方統編',d.buyerId||''],['賣方統編',d.sellerId||''],
+      ['收件／轉寄資訊',d.recipient],['未稅',d.net],['稅額',d.tax],['含稅',d.gross]];
     const cell=value=>e(value===null||value===''?'—':String(value));
     node.innerHTML=`<div class="case-doc-card case-doc-preview">
       <strong>${e(d.vendor)} ${e(d.kind)} · ${e(d.name)} · PDF</strong>
       <p class="case-meta">${VendorDocs.pageLabel(d.pages)?'第 '+VendorDocs.pageLabel(d.pages)+' 頁 · ':''}${pending.saved?'已保存':'待確認'} · 案件 ${e(labelFor(c))}</p>
       <p class="${problem?'case-warning':'case-meta'}">${e(problem || evidence.join('；') || '缺少可直接核對的案件識別。請拿原件核對收件、品項及案件後再確認。')}</p>
+      ${matchKey?`<p class="case-meta">配對依據 ${e(stored.pair.orderFallback?'訂單單號 '+stored.pair.orderFallback:matchKey)} · ${stored.pair.related?.length||0} 份關聯附件</p>`:''}
       ${invoice.ambiguous?'<p class="case-warning">此單據有多張相符發票，請查看各筆發票。</p>':
         invoice.no!==d.invoiceNo||invoice.date!==d.invoiceDate?`<p class="case-meta">已帶入關聯發票或人工修正資訊。原始辨識值 ${e(d.invoiceNo||'—')} ｜ ${e(d.invoiceDate||'—')}</p>`:''}
-      ${d.warnings.length?`<p class="case-warning">${e(d.warnings.join(' '))}</p>`:''}
+      ${warnings.length?`<p class="case-warning">${e(warnings.join('；'))}</p>`:''}
       <dl class="case-doc-values">${fields.map(([label,value])=>`<div><dt>${label}</dt><dd>${cell(value)}</dd></div>`).join('')}</dl>
       <div id="caseVendorItems"></div>
       ${!pending.saved?`<form id="caseVendorConfirm">
@@ -437,7 +477,7 @@
     const c=order();
     if(!c||!Cases.hasVendor(c,vendor))throw Error('請先確認目前案件含有此供應商的設備。');
     if(!replaceKey){await runBatch([file],vendor,kind);return;}
-    vendorPreview={caseId:c.id,name:file.name,vendor,kind,replaceKey};
+    vendorPreview={caseId:c.id,name:file.name,vendor,kind,replaceKey,file};
     renderVendorPreview();
     try{
       vendorPreview.doc=await VendorDocs.read(file,vendor,kind);
@@ -577,9 +617,9 @@
     posImport=null;
     byId('casePosRange').hidden=true;
   }
-  function preparePosRange(name, rows) {
+  function preparePosRange(name, rows, quick) {
     const first=rows[0].row, last=rows.at(-1).row;
-    posImport={name,rows,first,last};
+    posImport={name,rows,first,last,quick};
     for(const [id,value] of [['casePosFrom',first],['casePosTo',last]]){
       const input=byId(id);
       input.min=first; input.max=last; input.value=String(value);
@@ -587,11 +627,11 @@
     byId('casePosRangeInfo').textContent=`${name} · 可選 Excel 第 ${first} 至 ${last} 列（含起訖列）`;
     byId('casePosRange').hidden=false;
     byId('casePosFrom').focus?.();
-    status('請選擇列範圍，再按「套用範圍」。');
+    status('請選擇列範圍，再按「匯入所選列」。');
   }
-  function applyPosRange() {
+  async function applyPosRange() {
     if(!posImport) return;
-    const {name,rows,first,last}=posImport;
+    const {name,rows,first,last,quick}=posImport;
     const from=Number(byId('casePosFrom').value), to=Number(byId('casePosTo').value);
     staged=null;
     renderPreview();
@@ -604,12 +644,13 @@
     const counts={new:0,same:0,conflict:0},items=[];
     preview.forEach((r,i)=>{counts[r.type]++;if(r.type==='conflict')items.push(i);});
     staged={type:'pos',name,rows:preview,page:0,counts,items,choices:new Map(),from,to};
+    if(quick&&!items.length)return commit();
     renderPreview();
     byId('casePreview').scrollTop=0;
     byId('casePreview').focus?.();
     status('請核對預覽，再按「確認匯入」。');
   }
-  async function importExcel(file, type) {
+  async function importExcel(file, type, quick=false) {
     if (!file) return;
     const c = order();
     clearPosFile();
@@ -623,7 +664,7 @@
     }
     const projected=await ImportIO.excel(file,type,vendor);
     if(token!==stageToken)return;
-    if(type==='pos'){preparePosRange(file.name,projected);return;}
+    if(type==='pos'){preparePosRange(file.name,projected,quick);return;}
     const data=type==='sap'?projected:null;
     let rows=type==='sap'?data.rows:projected;
     if(type==='request'){
@@ -642,7 +683,7 @@
     renderPreview();
     status('已讀取檔案，請核對預覽後確認匯入。');
   }
-  function commit() {
+  async function commit() {
     if (!staged) return;
     const {type,rows,data,caseId,choices}=staged;
     // Only the branches touched by the import need an isolated copy.
@@ -690,6 +731,7 @@
     changed();
     render();
     status('匯入完成。請勾選要處理的案件。');
+    if(type==='pos')await runQueuedFiles();
   }
   function downloadWork() {
     const blob = new Blob([JSON.stringify({data: state, selected: [...selected]}, null, 2)], {type: 'application/json'});
@@ -718,6 +760,7 @@
     saved();
     render();
     status('已載入 ' + state.cases.length + ' 個案件。');
+    await runQueuedFiles();
   }
   async function copy(text) {
     if (!text) throw Error('目前沒有可複製的內容。');
@@ -896,7 +939,7 @@
     if(target.id==='caseBatchFiles'){
       const batch=Array.from(target.files||[]);
       target.value='';
-      action(()=>runBatch(batch));
+      action(()=>importBatch(batch));
       return;
     }
     const files = {casePos: 'pos', caseQuote: 'quote', caseSap: 'sap', caseRequests: 'request'};
@@ -974,6 +1017,21 @@
       if(d){vendorPreview={caseId:c.id,doc:d.parsed,saved:true};renderVendorPreview();}
       return;
     }
+    if(b.dataset.docDownload){
+      action(async()=>{
+        const d=VendorDocs.documents(order()).find(ref=>ref.key===b.dataset.docDownload);
+        if(!d?.archiveKey)throw Error('找不到原始 PDF。');
+        const file=await VendorDocs.original(d.archiveKey);
+        if(!file)throw Error('這個瀏覽器沒有原始 PDF。請從原匯入裝置下載。');
+        const url=URL.createObjectURL(file);
+        const link=document.createElement('a');
+        link.href=url;
+        link.download=d.name;
+        link.click();
+        setTimeout(()=>URL.revokeObjectURL(url),1000);
+      });
+      return;
+    }
     if(b.dataset.docRemove){
       const c=order(), d=c&&VendorDocs.documents(c).find(d=>d.key===b.dataset.docRemove);
       if(d&&confirm('移除這份文件？已儲存的發票或回填可在請款前整理個別管理。')){
@@ -1008,6 +1066,7 @@
     const handlers = {
       'cancel-doc':()=>{vendorPreview=null;renderVendorPreview();},
       'apply-pos-range':applyPosRange,
+      'clear-queued-files':()=>{queuedFiles=[];renderQueue();},
       'pos-add-all':()=>setPosChoices('add','pos-add-all'),
       'pos-skip-all':()=>setPosChoices('skip','pos-skip-all'),
       'clear-pos-file':()=>{clearPosFile();staged=null;renderPreview();status('已取消選檔。');},
@@ -1044,15 +1103,17 @@
     if(busy)return;
     if(!order())return;
     if(form.id==='caseQuotationForm'){action(()=>buildQuotation(form,order()));return;}
-    action(() => {
+    action(async () => {
       const c = order();
       const f = new FormData(form);
       if(form.id==='caseVendorConfirm'){
         const pending=vendorPreview;
         if(!pending?.doc||pending.saved||pending.caseId!==c.id||!f.has('confirmed'))throw Error('請先核對文件與目前案件。');
-        VendorDocs.save(state,c,pending.doc,pending.replaceKey,f.has('linkInvoice'));
+        const archiveKey=await VendorDocs.archive(pending.file).catch(()=> '');
+        VendorDocs.save(state,c,pending.doc,pending.replaceKey,f.has('linkInvoice'),false,{archiveKey});
         vendorPreview=null;
-        status('已儲存文件關聯。'+(f.has('linkInvoice')?'請再核對發票金額與設備。':''));
+        status('已儲存文件關聯。'+(archiveKey?'':'瀏覽器無法保存原始 PDF，請保留原始檔案。')+
+          (f.has('linkInvoice')?'請再核對發票金額與設備。':''));
       } else if (form.id === 'caseInvoiceForm') {
         Cases.attachInvoice(state, c, Object.fromEntries(f), f.has('replace'));
         status('已儲存發票。請勾選已核對並儲存。');
@@ -1103,7 +1164,7 @@
   drop.addEventListener('drop',event=>{
     event.preventDefault();
     drop.classList.remove('is-dragging');
-    if(!busy)action(()=>runBatch(Array.from(event.dataTransfer.files)));
+    if(!busy)action(()=>importBatch(Array.from(event.dataTransfer.files)));
   });
   render();
   root.setAttribute?.('data-ready','');
