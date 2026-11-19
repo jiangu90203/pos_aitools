@@ -7,6 +7,12 @@
   const money = n => n == null ? '—' : Number(n).toLocaleString('zh-TW', {maximumFractionDigits: 2});
   const selected = new Set();
   let state = Cases.create();
+  const sapPriceKey='posBilling:sapPrices:'+String(globalThis.location?.pathname||'/').replace(/index\.html$/,'');
+  let sapPriceStorageError=false;
+  try {
+    const savedPrices=localStorage.getItem(sapPriceKey);
+    if(savedPrices) Cases.setSapPrices(JSON.parse(savedPrices));
+  } catch { sapPriceStorageError=true; }
   let current = '', staged = null, filterPage = 0, busy = false, dirty = false, stageToken = 0;
   let posImport = null, vendorPreview = null;
   let batchItems=[], pendingDocuments=[], batchView='', batchPage=0, batchAffected=new Set();
@@ -694,6 +700,24 @@
     renderPreview();
     scheduleOrderPreview();
     byId('caseSapSource').textContent=state.sap?'SAP資料庫已載入（'+state.sap.rows.length+' 列）':'Excel 檔，讀取指定的 VK SAP 工作表';
+    renderSapPrices();
+  }
+  function renderSapPrices() {
+    const count=Cases.sapPriceCount();
+    byId('caseSapPricesStatus').textContent=sapPriceStorageError?'瀏覽器未能讀取或保存固定單價設定，重新開啟可能需再匯入。'
+      :count?'已載入 '+count+' 項固定單價':'首次使用請選擇內部提供的 SAP_固定單價.json';
+  }
+  async function importSapPrices(file) {
+    validateFile(file,['json']);
+    if(file.size>64*1024) throw Error('SAP 固定單價設定檔須小於 64 KB。');
+    const profile=JSON.parse(await file.text());
+    Cases.setSapPrices(profile);
+    try {
+      localStorage.setItem(sapPriceKey,JSON.stringify(profile));
+      sapPriceStorageError=false;
+    } catch { sapPriceStorageError=true; }
+    renderSapPrices();
+    status(sapPriceStorageError?'固定單價已套用於本次工作階段。':'固定單價已保存，可重新匯出 SAP Key-in 準備表。');
   }
   function clearPosFile() {
     posImport=null;
@@ -1030,6 +1054,7 @@
       target.value = '';
       if (files[target.id]) action(() => importExcel(upload, files[target.id]));
       if (target.id === 'caseWork') action(() => loadWork(upload));
+      if (target.id === 'caseSapPrices') action(() => importSapPrices(upload));
       if(target.dataset?.docVendor)action(()=>readVendorDocument(upload,target.dataset.docVendor,target.dataset.docKind,target.dataset.docReplace));
       if (target.id === 'caseDocument') action(() => readDoc(upload));
     } else if (target.id === 'caseSelectPage') {

@@ -7,10 +7,30 @@ const Cases = (() => {
     '設備', '銷售價(含稅)', '數量', '試算未稅', '請款總金額', '採購價(含稅)', '採購價(未稅)',
     '出貨廠商', '出貨廠商ID', 'vk請款單', '峰潮下單日期', '請款憑證', '憑證日期', '請款日期', '', '備註', '拍檔下單日期'];
   const sapOrderColumns = [6, 23, sapHeaders.indexOf('拍檔下單日期')];
-  const partnerSapPrices = {
-    '拍檔POS主機': {purchaseNet:23800, saleNet:29180},
-    '拍檔POS客顯螢幕': {purchaseNet:6200, saleNet:6820}
-  };
+  const priceFields = ['saleGross','saleNet','purchaseGross','purchaseNet'];
+  function validateSapPrices(profile) {
+    if (profile?.version!==1 || !profile.items || typeof profile.items!=='object' || Array.isArray(profile.items))
+      throw Error('請選擇 SAP_固定單價.json。');
+    const pairs=Object.entries(profile.items);
+    if (!pairs.length || pairs.length>200) throw Error('SAP 固定單價的品項數量不符。');
+    const cleanItems=pairs.map(([name,price])=>{
+      const key=clean(name).normalize('NFKC');
+      if (!key || !price || typeof price!=='object' || Array.isArray(price) ||
+          !['sale','purchase'].every(kind=>Object.hasOwn(price,kind+'Gross')||Object.hasOwn(price,kind+'Net')) ||
+          !Object.entries(price).every(([field,value])=>priceFields.includes(field)&&typeof value==='number'&&amount(value)!==null))
+        throw Error('SAP 固定單價的品項或金額格式不符。');
+      return [key,price];
+    });
+    if (new Set(cleanItems.map(([name])=>name)).size!==pairs.length) throw Error('SAP 固定單價中有重複品項。');
+    return Object.fromEntries(cleanItems);
+  }
+  let sapPrices=globalThis.SapPriceProfile?.items||{};
+  function setSapPrices(profile) {
+    sapPrices=validateSapPrices(profile);
+  }
+  const sapPriceCount=()=>Object.keys(sapPrices).length;
+  const sapPrinterItems = new Set(['P8802','EPSON發票機','WIFI發票機(M303)']);
+  const paperItem = '發票紙捲';
   const partnerSupplier = {code:'VAA0001432', id:'拍檔科技'};
   const hmHeaders = ['預計撥款日', '請款單號', '發票號碼', '發票日期', '說明', '金額', '已請款', '已撥款', '對帳單', '備註'];
   const billHeaders = ['來源列', 'SHOP ID', '報價單編號', '公司名稱', '供應商', '請款描述', '發票號碼',
@@ -479,14 +499,115 @@ const Cases = (() => {
     });
     return row;
   }
-  const partnerGross = net => Math.round(cents(net)*105/100)/100;
-  function completePartnerPrice(row, grossColumn, netColumn, defaultNet) {
-    if (populated(row[grossColumn]) && populated(row[netColumn])) return;
-    try {
-      const gross=amount(row[grossColumn]), net=amount(row[netColumn]);
-      if (net===null)row[netColumn]=gross===null?defaultNet:Math.round(cents(gross)*100/105)/100;
-      if (gross===null)row[grossColumn]=partnerGross(row[netColumn]);
-    } catch { /* Existing invalid price remains visible for manual review. */ }
+  const sapGross = net => Math.round(cents(net)*105/100)/100;
+  const sapNet = gross => Math.round(cents(gross)*100/105)/100;
+  function sapPrice(item) {
+    const key=clean(item).normalize('NFKC');
+    if (Object.hasOwn(sapPrices,key)) return sapPrices[key];
+    const compact=key.replace(/\s+/g,'');
+    return Object.hasOwn(sapPrices,compact)?sapPrices[compact]:{};
+  }
+  function sapNumeric(value) {
+    const raw=clean(value).replace(/,/g,'');
+    return /^\d+(?:\.\d+)?$/.test(raw)&&Number.isFinite(Number(raw))?Number(raw):null;
+  }
+  function completeSapPrice(row, grossColumn, netColumn, defaults, kind) {
+    const gross=sapNumeric(row[grossColumn]);
+    const net=sapNumeric(row[netColumn]);
+    if (gross!==null || net!==null) {
+      if (gross!==null) row[grossColumn]=gross;
+      if (net!==null) row[netColumn]=net;
+      if (!populated(row[grossColumn])) row[grossColumn]=sapGross(net);
+      if (!populated(row[netColumn])) row[netColumn]=sapNet(gross);
+      return;
+    }
+    if (populated(row[grossColumn]) || populated(row[netColumn])) return;
+    const defaultGross=defaults[kind+'Gross'], defaultNet=defaults[kind+'Net'];
+    if (defaultGross===undefined&&defaultNet===undefined) return;
+    row[grossColumn]=defaultGross??sapGross(defaultNet);
+    row[netColumn]=defaultNet??sapNet(defaultGross);
+  }
+  function sapPaperType(row, raw) {
+    const values=[row[14],row[16]].filter(populated);
+    if (values.some(value=>sapNumeric(value)===null)) return 'conflict';
+    const hasPaid=values.some(value=>sapNumeric(value)>0)||/單購|加購/.test(raw);
+    const hasFree=values.some(value=>sapNumeric(value)===0)||/贈品|贈送|免費/.test(raw);
+    if (hasPaid&&hasFree) return 'conflict';
+    return hasPaid?'paid':hasFree?'free':'';
+  }
+  function fillSapPaper(entries, pos, devices, report, hasPrinterConflict) {
+    const papers=entries.filter(({row})=>standardItem(row[13])===paperItem);
+    let remaining=devices.reduce((qty,d)=>qty+(sapPrinterItems.has(d.item)?2*d.qty:0),0);
+    const newPaper=(qty, insertAfter=null)=>{
+      const row=Array(sapHeaders.length).fill(null);
+      Object.assign(row,{1:pos.shopId,2:pos.quote,7:pos.merchant,13:paperItem,15:qty});
+      fillSapOrderDates(row,pos);
+      const entry={row};
+      if(insertAfter) entries.splice(entries.indexOf(insertAfter)+1,0,entry);
+      else entries.push(entry);
+      return row;
+    };
+    const free=row=>{
+      for (const column of [14,16,18,19]) {
+        if (!populated(row[column])||sapNumeric(row[column])===0) row[column]=0;
+      }
+    };
+    const paid=row=>{
+      const price=sapPrice(paperItem);
+      // 已付費的紙捲在舊 VK 以 0 代記空白採購價。
+      if ((price.purchaseGross!==undefined||price.purchaseNet!==undefined) &&
+          [row[18],row[19]].every(x=>!populated(x)||sapNumeric(x)===0)) row[18]=row[19]=null;
+      completeSapPrice(row,14,16,{saleGross:50,...price},'sale');
+      completeSapPrice(row,18,19,price,'purchase');
+      if ([18,19].some(column=>sapNumeric(row[column])===null)) report('單購紙捲的採購單價待確認');
+    };
+    const unpriced=[];
+    let unsafe=hasPrinterConflict;
+    for(const entry of papers){
+      const {row,raw}=entry, type=sapPaperType(row,raw??row[13]);
+      const qty=sapNumeric(row[15]);
+      if(type==='conflict'||!Number.isSafeInteger(qty)||qty<=0){
+        report('紙捲數量或單價有衝突，請確認購買與贈品數量');
+        unsafe=true;
+      } else if(type==='free'){
+        free(row);
+        remaining=Math.max(0,remaining-qty);
+      } else if(type==='paid') paid(row);
+      else unpriced.push(entry);
+    }
+    if (unsafe) return;
+    // POS 有兩行紙捲時，先辨識數量剛好等於贈送額度的那一行。
+    const exact=remaining>0?unpriced.findIndex(({row})=>Number(row[15])===remaining):-1;
+    if(exact>0) unpriced.unshift(...unpriced.splice(exact,1));
+    for(const entry of unpriced){
+      const {row,historical}=entry, qty=Number(row[15]);
+      if (!remaining) { paid(row); continue; }
+      if (qty<=remaining) {
+        free(row);
+        remaining-=qty;
+      } else if(historical){
+        report('VK 原有紙捲列未區分贈送與單購，請確認數量後拆列');
+        return;
+      } else {
+        report('單列紙捲未標示是否含贈品，已按含贈品拆列。若此列全為加購，請在 POS 表標為「發票紙捲（加購）」後重新匯入。');
+        row[15]=remaining;
+        free(row);
+        const extra=newPaper(qty-remaining,entry);
+        extra[8]=row[8]; extra[9]=row[9];
+        paid(extra);
+        remaining=0;
+      }
+    }
+    if(remaining) free(newPaper(remaining));
+  }
+  function fillEquipmentPrices(row,item,report) {
+    const price=sapPrice(item);
+    completeSapPrice(row,14,16,price,'sale');
+    completeSapPrice(row,18,19,price,'purchase');
+    const missing=[];
+    if ([14,16].some(column=>sapNumeric(row[column])===null)) missing.push('銷售');
+    if ([18,19].some(column=>sapNumeric(row[column])===null)) missing.push('採購');
+    if (missing.length) report('設備「'+item+'」的'+missing.join('及')+'單價待確認');
   }
   function formatSapDates(sheet, length) {
     for (const [column, includeTime] of [...sapOrderColumns.map(c=>[c,false]),[9,false],[25,false],[26,true]]) {
@@ -535,22 +656,35 @@ const Cases = (() => {
       const {matches, sales} = salesCandidates(state, order);
       const sale = order.sale.no ? order.sale : sales.length === 1 ? sales[0] : {};
       if (sales.length > 1 && !order.sale.no) report('有多張銷售發票候選，請確認後填入');
-      if (!state.sap) report('未匯入歷史 VK 工作表，本次提供固定欄位空白底稿');
+      if (!state.sap) report('未匯入歷史 VK 工作表，沒有歷史 SAP 單號可帶入');
+      if (!sapPriceCount()) report('尚未設定固定單價，請在「資料來源與範圍設定」匯入 SAP_固定單價.json');
       const used = new Set(), totaled = new Set(), checkedPartnerInvoices = new Set();
-      const devices = p.devices.filter(d => d.qty > 0);
+      const caseRows=[];
+      let printerConflict=false;
+      const devices = p.devices.filter(d => d.qty > 0)
+        .map(d=>({...d,item:standardItem(clean(d.raw||d.item).normalize('NFKC'))}));
       if (!devices.length) report('缺少有效的設備明細');
       const byVendor = Object.fromEntries(vendors.map(v => [v, invoiceLinks(state, order, v)]));
       const count = d => devices.filter(other => other.item === d.item && other.qty === d.qty).length;
+      const oldPaper=old.filter(row=>standardItem(row[13])===paperItem);
+      const newPaper=devices.filter(d=>d.item===paperItem);
+      const knownPaperBreakdown=oldPaper.length>1 && newPaper.length===1 && !/單購|加購|贈品|贈送|免費/.test(newPaper[0].raw)
+        && oldPaper.every(row=>['free','paid'].includes(sapPaperType(row,row[13]))&&Number.isSafeInteger(sapNumeric(row[15]))&&Number(row[15])>0)
+        && [oldPaper,oldPaper.filter(row=>sapPaperType(row,row[13])==='paid')]
+          .some(group=>group.reduce((sum,row)=>sum+Number(row[15]),0)===newPaper[0].qty);
       for (const d of devices) {
+        if (d.item===paperItem&&knownPaperBreakdown) continue;
         const vendor = vendorForItem(d.item);
         const sameItem = old.filter(r => standardItem(r[13]) === d.item);
         const oldMatches = sameItem.filter(r => Number(r[15]) === d.qty);
         if (!oldMatches.length && sameItem.length) {
           report('設備「' + d.item + '」的數量與 VK 原表不一致，保留原列並待確認');
+          if(sapPrinterItems.has(d.item)) printerConflict=true;
           continue;
         }
         if (oldMatches.length > 1 || (oldMatches.length && count(d) > 1)) {
           report('設備「' + d.item + '」對應多筆明細，保留 VK 原列並待確認');
+          if(sapPrinterItems.has(d.item)) printerConflict=true;
           continue;
         }
         const oldRow = oldMatches[0];
@@ -561,7 +695,7 @@ const Cases = (() => {
         };
         fill(1, p.shopId); fill(2, p.quote); fill(7, p.merchant); fill(13, d.item); fill(15, d.qty);
         fillSapOrderDates(row,p);
-        const partnerPrice=Object.hasOwn(partnerSapPrices,d.item)?partnerSapPrices[d.item]:null;
+        const partnerPrice=vendor==='拍檔'?sapPrice(d.item):null;
         if (vendor === '拍檔') {
           row[20]=partnerSupplier.code;
           row[21]=partnerSupplier.id;
@@ -572,8 +706,7 @@ const Cases = (() => {
         fill(8, sale.no); fill(9, sale.date);
         const prices = order.sale.lines?.find(l => l.slot === d.slot);
         const [gross, net] = prices ? [prices.gross, prices.net] : count(d) === 1 ? compatibleSalePrices(matches, d) : [];
-        if (!partnerPrice || !populated(row[14]) && !populated(row[16])) {fill(14, gross); fill(16, net);}
-        if (partnerPrice) completePartnerPrice(row,14,16,partnerPrice.saleNet);
+        if (!populated(row[14]) && !populated(row[16])) {fill(14, gross); fill(16, net);}
         const entries = byVendor[vendor] || [];
         const entry = entries.find(e => isReady(billStatus(order, e.inv, e.link, entries)) &&
           linkSlots(order, entries, e.link, vendor).includes(d.slot));
@@ -594,30 +727,35 @@ const Cases = (() => {
               totaled.add(inv.key);
             }
             if (slots.length === 1 && cents(split.gross) % d.qty === 0 && cents(split.net) % d.qty === 0) {
-              if (!partnerPrice || !populated(row[18]) && !populated(row[19])) {
+              if (!populated(row[18]) && !populated(row[19])) {
                 fill(18, cents(split.gross) / d.qty / 100); fill(19, cents(split.net) / d.qty / 100);
               }
-            } else if (partnerPrice && !checkedPartnerInvoices.has(inv.key)) {
+            } else if (partnerPrice?.purchaseNet!==undefined && !checkedPartnerInvoices.has(inv.key)) {
               checkedPartnerInvoices.add(inv.key);
               const covered=devices.filter(device=>slots.includes(device.slot));
-              if (covered.every(device=>Object.hasOwn(partnerSapPrices,device.item))) {
-                const net=covered.reduce((sum,device)=>sum+partnerSapPrices[device.item].purchaseNet*device.qty,0);
-                if (cents(net)!==cents(split.net)||cents(partnerGross(net))!==cents(split.gross)) {
+              if (covered.every(device=>sapPrice(device.item).purchaseNet!==undefined)) {
+                const net=covered.reduce((sum,device)=>sum+sapPrice(device.item).purchaseNet*device.qty,0);
+                if (cents(net)!==cents(split.net)||cents(sapGross(net))!==cents(split.gross)) {
                   report('拍檔發票 '+inv.no+' 與標準採購價合計不同，採購單價待核對，保留實際發票總額');
                 }
               }
-            } else if (!partnerPrice && (!populated(row[18]) || !populated(row[19]))) report('多設備憑證的個別採購價待分攤，已保留發票總額');
+            } else if (!partnerPrice && sapPrice(d.item).purchaseGross===undefined && sapPrice(d.item).purchaseNet===undefined &&
+              (!populated(row[18]) || !populated(row[19]))) report('多設備憑證的個別採購價待分攤，已保留發票總額');
           }
         }
-        if (partnerPrice) completePartnerPrice(row,18,19,partnerPrice.purchaseNet);
         fill(28, p.notes);
-        if (!populated(row[14]) || !populated(row[16])) report('設備「' + d.item + '」的銷售單價待確認');
-        rows.push(row);
+        if (d.item!==paperItem) fillEquipmentPrices(row,d.item,report);
+        caseRows.push({row,raw:d.raw,historical:Boolean(oldRow)});
       }
       for (const r of old) if (!used.has(r)) {
-        report('VK 原表有未對應的設備列，已保留 ERP 歷史');
-        rows.push(fillSapOrderDates(r.slice()));
+        const row=fillSapOrderDates(r.slice());
+        const item=standardItem(row[13]);
+        if (!(item===paperItem&&knownPaperBreakdown)) report('VK 原表有未對應的設備列，已保留 ERP 歷史');
+        if (item!==paperItem&&item) fillEquipmentPrices(row,item,report);
+        caseRows.push({row,historical:true});
       }
+      fillSapPaper(caseRows,p,devices,report,printerConflict);
+      rows.push(...caseRows.map(({row})=>row));
     }
     if (!rows.length && !notes.length) throw Error('勾選的案件沒有可輸出的設備資料。');
     const book = XLSX.utils.book_new();
@@ -689,5 +827,5 @@ const Cases = (() => {
   return {vendors, sapName, sapHeaders, hmHeaders, create, desc, hasVendor, quoteKey, date, amount, posRows, previewPos,
     commitPos, attachInvoice, correctInvoice, invoiceLinks, invoiceData, allocation, linkSlots, billStatus, descriptionFor,
     isReady, orderMessages, billWorkbook, huamaoWorkbook, sapTemplate, quotationRows, salesCandidates,
-    sapWorkbook, requestRows, restore, quotationDocument};
+    sapWorkbook, requestRows, restore, quotationDocument, setSapPrices, sapPriceCount};
 })();
