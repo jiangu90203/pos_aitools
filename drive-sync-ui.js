@@ -4,6 +4,7 @@ function initDriveSync({snapshot,hasWork,canReplace,validateWork,restore,onSaved
   const panel = byId('driveSync');
   if (!panel) return null;
   const input = byId('driveClientId'), summary = byId('driveSyncSummary');
+  const toggle = byId('driveSyncToggle');
   const account = byId('driveAccount'), detail = byId('driveSyncStatus');
   const connect = byId('driveConnect'), disconnect = byId('driveDisconnect');
   const refresh = byId('driveRefresh'), save = byId('driveSave');
@@ -31,6 +32,9 @@ function initDriveSync({snapshot,hasWork,canReplace,validateWork,restore,onSaved
       summary.textContent = message;
       summary.dataset.tone = tone;
       detail.textContent = message;
+      toggle.dataset.tone = tone;
+      toggle.title = 'Google Drive 個人同步 · ' + message;
+      detail.dataset.tone = tone;
     }
     const authorized = ready();
     account.textContent = drive && identity ? 'Google 帳號 '+(identity.emailAddress || '已確認') : '';
@@ -203,6 +207,16 @@ function initDriveSync({snapshot,hasWork,canReplace,validateWork,restore,onSaved
   });
   panel.addEventListener('toggle',()=>{
     if (panel.open && DriveSync.validClientId(input.value.trim())) DriveSync.prepareGoogle().catch(()=>{});
+  });
+  panel.addEventListener('keydown',event=>{
+    if (event.key !== 'Escape' || !panel.open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    panel.open = false;
+    toggle.focus();
+  });
+  window.addEventListener('pointerdown',event=>{
+    if (panel.open && !panel.contains(event.target)) panel.open = false;
   });
   disconnect.addEventListener('click',()=>{
     clearTimeout(timer);

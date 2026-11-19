@@ -847,7 +847,7 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.16#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.17#${name}"></use></svg>`;
 }
 // Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {

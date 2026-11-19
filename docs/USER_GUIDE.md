@@ -1,4 +1,4 @@
-# 設備請款助手 Pro v15.16
+# 設備請款助手 Pro v15.17
 
 ## 平常怎麼用
 
@@ -55,13 +55,13 @@ Excel 操作可從本機打開此網頁。大量檔案可透過套件的本機 H
 
 ### Google Drive 個人同步
 
-在案件工作台展開「Google Drive 個人同步」。首次使用需依 [設定說明](GOOGLE_DRIVE_SETUP.md) 設定 OAuth。換電腦用同一 Google 帳號連線即可接續。
+點選頁首右上角使用者圖示，開啟「Google Drive 個人同步」。首次使用需依 [設定說明](GOOGLE_DRIVE_SETUP.md) 設定 OAuth。換電腦用同一 Google 帳號連線即可接續。
 
 ### 本機使用及 GitHub Pages 更新
 
 - 解開發布 ZIP，保留原資料夾層級。本機可開啟 `index.html`。
 - 發布時，在 GitHub 的 **Settings → Pages** 確認來源，將解壓後的全部檔案放到該發布資料夾，同次提交。保留 `index.html`、`.nojekyll`、`vendor/` 和 `docs/` 的相對位置。
-- 等待 **Actions** 顯示部署成功，重新整理確認頁首為 **v15.16**。營運 Excel、報價及案件工作檔請留在公司內部。
+- 等待 **Actions** 顯示部署成功，重新整理確認頁首為 **v15.17**。營運 Excel、報價及案件工作檔請留在公司內部。
 
 
 ### 系統資訊
