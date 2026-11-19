@@ -50,7 +50,7 @@
   const asTri = value => value === '' ? null : value === 'true';
   const dateInput = value => { try { return Cases.date(value); } catch { return ''; } };
   const labelFor = c => [c.pos.quote || '無報價單號', c.pos.merchant || '待補公司', '第 ' + c.pos.row + ' 列'].join(' ｜ ');
-  const status = (message, error = false) => {
+  const status = (message, error = false, {tone = error ? 'error' : 'info', notify = true} = {}) => {
     byId('caseStatus').textContent = message;
     byId('caseStatus').classList.toggle('is-error', error);
     const detail = byId('caseDetailFeedback');
@@ -58,6 +58,7 @@
       detail.textContent = message;
       detail.classList.toggle('case-warning', error);
     }
+    if (notify) reportOperation(message,tone);
   };
   const changed = () => {
     dirty = true;
@@ -102,12 +103,17 @@
     return suppliers.every(v=>VendorDocs.kinds.every(k=>docs.some(d=>d.vendor===v&&d.kind===k)))?'complete':'missing';
   }
   const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,0));
+  const batchLabels={linked:'成功配對',unmatched:'未找到對應案件',duplicate:'文件重複',failed:'解析失敗'};
+  function batchCounts(){
+    const counts={linked:0,unmatched:0,duplicate:0,failed:0};
+    for(const item of batchItems)counts[item.type]++;
+    return counts;
+  }
   function renderBatch(){
     batchAffected=new Set();
-    const counts={linked:0,unmatched:0,duplicate:0,failed:0};
+    const counts=batchCounts();
     const issues=batchItems.filter(item=>item.type==='linked'&&item.reason);
     for(const item of batchItems){
-      counts[item.type]++;
       if(item.type==='unmatched'&&item.doc)for(const id of item.matches||[]){
         batchAffected.add(item.doc.vendor+':'+id);
         batchAffected.add(':'+id);
@@ -121,7 +127,7 @@
     batchPage=Math.max(0,Math.min(batchPage,last));
     const slice=items.slice(batchPage*orderSize,(batchPage+1)*orderSize);
     node.innerHTML=`<div class="erp-batch-summary">
-      <strong role="status">成功配對 ${counts.linked} 筆｜未找到對應案件 ${counts.unmatched} 筆｜文件重複 ${counts.duplicate} 筆｜解析失敗 ${counts.failed} 筆</strong>
+      <strong class="erp-batch-metrics" role="status">${Object.entries(batchLabels).map(([type,label])=>`<span class="erp-batch-metric" data-type="${type}">${label} ${counts[type]} 筆</span>`).join(' ')}</strong>
       ${batchItems.some(item=>item.file)?`<button type="button" class="case-btn primary" data-case-action="download-vendor-batch">${uiIcon('download')} 下載本批歸檔 ZIP</button>`:''}
       ${Object.entries({unmatched:'查看未配對',duplicate:'查看重複文件',failed:'查看解析失敗',issues:'查看配對提醒（'+issues.length+'）'}).map(([key,label])=>
         (counts[key]||key==='issues'&&issues.length)?`<button type="button" class="case-btn" aria-pressed="${batchView===key}" data-batch-view="${key}">${label}</button>`:'').join('')}
@@ -141,6 +147,7 @@
       `已選 ${queuedFiles.length} 份 PDF，匯入 POS 或載入工作檔後會自動核對。`:'';
   }
   async function importBatch(files) {
+    if(files.length)recordActivity('案件工作台開始匯入 '+files.length+' 份檔案。');
     const workbooks=files.filter(file=>/\.xlsx?$/i.test(file.name));
     if(workbooks.length>1)throw Error('每批可選一份 POS Excel 與多份 PDF。請重新選擇檔案。');
     const [workbook]=workbooks;
@@ -176,7 +183,7 @@
     batchItems=[...pendingDocuments];
     batchView=''; batchPage=0;
     for(const [i,file] of files.entries()){
-      status(`讀取文件 ${i+1} ／ ${files.length}`);
+      status(`讀取文件 ${i+1} ／ ${files.length}`,false,{notify:false});
       await yieldUI();
       try{
         const records=await VendorDocs.readRecords(file,vendor,kind);
@@ -221,7 +228,14 @@
     if(saved)changed();
     renderBatch();
     render();
-    status('文件比對已完成。');
+    const counts=batchCounts();
+    for(const item of batchItems){
+      if(item.reason)recordActivity(item.name+'｜'+item.reason,item.type==='failed'?'error':'warning');
+    }
+    const summary=Object.entries(batchLabels).map(([type,label])=>label+' '+counts[type]+' 筆').join('｜');
+    status('文件比對完成。'+summary,Boolean(counts.failed),{
+      tone:counts.failed?'error':counts.unmatched||counts.duplicate?'warning':'success'
+    });
   }
   async function downloadVendorBatch() {
     const archive=XLSX.CFB.utils.cfb_new(), added=new Map(), casesByVendor=new Map(), filenames=new Map();
@@ -287,7 +301,7 @@
     link.download='供應商請款歸檔_'+formatToday()+'.zip';
     link.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
-    status('已要求下載本批歸檔 ZIP。');
+    status('已要求下載本批歸檔 ZIP。',false,{tone:'success'});
   }
   function lookup() {
     const query = norm(byId('caseSearch').value);
@@ -758,6 +772,7 @@
   }
   async function importExcel(file, type, quick=false) {
     if (!file) return;
+    recordActivity('案件工作台讀取「'+file.name+'」。');
     const c = order();
     clearPosFile();
     staged = null;
@@ -791,7 +806,7 @@
   }
   async function commit() {
     if (!staged) return;
-    const {type,rows,data,caseId,choices}=staged;
+    const {type,name,rows,data,caseId,choices}=staged;
     // Only the branches touched by the import need an isolated copy.
     const clone=value=>typeof structuredClone==='function'?structuredClone(value):JSON.parse(JSON.stringify(value));
     const next={...state};
@@ -836,7 +851,7 @@
     staged = null;
     changed();
     render();
-    status('匯入完成。請勾選要處理的案件。');
+    status('已確認匯入「'+name+'」。',false,{tone:'success'});
     if(type==='pos')await runQueuedFiles();
   }
   function downloadWork() {
@@ -847,7 +862,7 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     saved();
-    status('已要求下載案件工作檔。');
+    status('已要求下載案件工作檔。',false,{tone:'success'});
   }
   async function loadWork(file) {
     validateFile(file, ['json']);
@@ -865,7 +880,7 @@
     current = ''; staged = null; filterPage = 0;
     saved();
     render();
-    status('已載入 ' + state.cases.length + ' 個案件。');
+    status('已載入 ' + state.cases.length + ' 個案件。',false,{tone:'success'});
     await runQueuedFiles();
   }
   async function copy(text) {
@@ -882,7 +897,7 @@
       finally { area.remove(); }
       if (!ok) throw Error('無法使用剪貼簿，請從頁面的預覽選取、複製。');
     }
-    status('已複製到剪貼簿。');
+    status('已複製到剪貼簿。',false,{tone:'success'});
   }
   function checkBills() {
     const orders = focused();
@@ -941,6 +956,7 @@
       feedback.textContent='已複製 '+vendor+' 的'+(channel==='line'?' LINE':' Email')+'文字。';
     } catch(err) {
       feedback.textContent=err.message;
+      reportOperation(err.message,'error','複製失敗');
     }
   }
   function openVendorGmail(vendor) {
@@ -954,7 +970,11 @@
       const url=gmailComposeUrl(emails(to),subject,body,emails(cc));
       window.open(url,'_blank','noopener,noreferrer');
       feedback.textContent='已要求開啟 Gmail。請檢查登入帳號與信件內容，再於 Gmail 寄送。';
-    }catch(err){feedback.textContent=err.message;}
+      reportOperation(feedback.textContent,'info');
+    }catch(err){
+      feedback.textContent=err.message;
+      reportOperation(err.message,'error','無法開啟 Gmail');
+    }
   }
   function clearQuoteResult() {
     if(!quoteUrl)return;
@@ -980,11 +1000,11 @@
     download.href=quoteUrl;
     download.download='報價單_'+quote.no.replace(/[\\/:*?"<>|\x00-\x1F]/g,'_')+'.pdf';
     byId('caseQuoteResult').hidden=false;
-    status('已產生報價單 PDF，可預覽或下載。');
+    status('已產生報價單 PDF，可預覽或下載。',false,{tone:'success'});
   }
   function write(book, label) {
     XLSX.writeFile(book, label + '_' + formatToday() + '.xlsx');
-    status('已要求下載「' + label + '」。');
+    status('已要求下載「' + label + '」。',false,{notify:false});
   }
   const exports={
     partner:orders=>write(Cases.billWorkbook(state,orders),'拍檔請款彙整'),
@@ -1031,7 +1051,7 @@
     if(staged?.type==='pos'&&['casePosFrom','casePosTo'].includes(event.target.id)){
       staged=null;
       renderPreview();
-      status('列範圍已變更，請重新套用。');
+      status('列範圍已變更，請重新套用。',false,{notify:false});
     }
     if(event.target.form?.id==='caseQuotationForm')clearQuoteResult();
     if(!event.isComposing&&['caseSearch','caseFirstRow','caseLastRow'].includes(event.target.id))scheduleFilter();
@@ -1189,7 +1209,7 @@
         const exportBook=exports[byId('caseExportKind').value];
         if(!exportBook)throw Error('請選擇匯出格式。');
         const orders=checkBills();
-        status(`正在整理 ${orders.length} 個案件的 Excel…`);
+        status(`正在整理 ${orders.length} 個案件的 Excel…`,false,{notify:false});
         await yieldUI();
         exportBook(orders);
       },
@@ -1255,7 +1275,7 @@
       }
       const feedback = byId('caseStatus').textContent;
       changed(); render();
-      status(feedback);
+      status(feedback,false,{notify:false});
     });
   });
   root.addEventListener('keydown',event=>{

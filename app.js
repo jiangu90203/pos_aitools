@@ -2,13 +2,7 @@
 
 
 function showProductToast(fileName){
-  const toast=document.getElementById('productToast');
-  if(!toast) return;
-  const fileEl=toast.querySelector('.toastFile');
-  if(fileEl) fileEl.textContent=fileName ? `已送出：${fileName}（請確認下載紀錄）` : '檔案已下載';
-  toast.classList.add('show');
-  clearTimeout(window.__ebaToastTimer);
-  window.__ebaToastTimer=setTimeout(()=>toast.classList.remove('show'),2600);
+  reportOperation(fileName ? '已要求下載「'+fileName+'」。' : '已送出下載，請確認瀏覽器下載紀錄。','success','匯出已送出');
 }
 if(typeof document !== 'undefined' && window.XLSX && XLSX.writeFile && !XLSX.__ebaWrappedWriteFile){
   const __ebaWriteFile=XLSX.writeFile.bind(XLSX);
@@ -31,20 +25,42 @@ const PARTNER_ITEMS = new Set(['拍檔POS主機','拍檔POS客顯螢幕']);
 const DIRECT_VENDOR_ITEMS = new Set([...HUAMAO_ITEMS,...PARTNER_ITEMS]);
 const CORE_ITEMS = new Set(['EPSON發票機','WIFI發票機(M303)','掃碼槍','錢箱','EPSON T82III 隔板']);
 let logLines=[], logFrame=0, fullLog=false;
+const activityLines=[];
+const activityLabels={info:'資訊',success:'完成',warning:'待確認',error:'錯誤'};
+const activityClock=new Intl.DateTimeFormat('zh-TW',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 function flushLog(){
   logFrame=0;
   if(typeof document==='undefined') return;
   const box=document.getElementById('log');
   if(!box) return;
-  const limit=500, omitted=!fullLog&&logLines.length>limit;
-  box.textContent=(omitted?'畫面顯示最近 500 筆。可按「顯示全部」查看較早的紀錄。\n':'')+
-    (fullLog?logLines:logLines.slice(-limit)).join('\n');
+  const limit=500, overflow=activityLines.length>limit;
+  const toggle=document.getElementById('logToggle');
+  const count=document.getElementById('logCount');
+  if(toggle)toggle.hidden=!overflow;
+  if(count)count.textContent=activityLines.length?'共 '+activityLines.length+' 筆':'';
+  const entries=(fullLog?activityLines.slice():activityLines.slice(-limit)).reverse();
+  box.textContent=entries.length?entries.join('\n\n'):'尚無處理紀錄。';
 }
-function log(message){
-  logLines.push(message);
+function recordActivity(message,tone='info'){
+  if(!message)return;
+  activityLines.push('['+activityClock.format(new Date())+'] '+activityLabels[tone]+'｜'+message);
   if(typeof document==='undefined') return;
+  const panel=document.getElementById('logPanel');
+  if(panel?.hidden)return;
   if(typeof requestAnimationFrame!=='function') flushLog();
   else if(!logFrame) logFrame=requestAnimationFrame(flushLog);
+}
+function reportOperation(message,tone='info',title){
+  recordActivity(message,tone);
+  if(typeof WorkspaceUI!=='undefined')WorkspaceUI.notify(message,tone,title);
+}
+function log(message,tone='info'){
+  logLines.push(message);
+  recordActivity(message,tone);
+}
+function reportOperationError(message){
+  log(message,'error');
+  if(typeof WorkspaceUI!=='undefined')WorkspaceUI.notify(message,'error');
 }
 function resetLog(title){logLines=[];log(title);}
 let hmSalesFileList=[];
@@ -155,6 +171,7 @@ async function parseSalesPdfFile(file){
 async function parseSalesPdfFiles(files){
   const arr=[...(files||[])];
   const out=[];
+  let failed=0;
   for(const f of arr){
     try{
       const recs=await parseSalesPdfFile(f);
@@ -166,9 +183,13 @@ async function parseSalesPdfFiles(files){
           log(`銷貨單解析：${f.name} 第${rec.頁碼}頁｜${rec.公司名稱||rec.客戶名稱||'未抓到公司'}｜發票 ${rec.發票號碼||'未抓到'}｜日期 ${rec.發票日期||'未抓到'}｜總計 ${rec.總計||'未抓到'}`);
         }
       }
-    }catch(err){log(`銷貨單解析失敗：${f.name}｜${err.message||err}`);}
+    }catch(err){
+      failed++;
+      log(`銷貨單解析失敗：${f.name}｜${err.message||err}`,'error');
+    }
   }
   if(arr.length&&!out.length)throw Error('選取的銷貨單皆無法解析，本次未匯出。請查看處理紀錄，確認檔案為含文字層的銷貨單 PDF。');
+  if(failed)reportOperation(failed+' 份銷貨單解析失敗。其餘檔案已繼續處理，詳見處理紀錄。','error');
   return out;
 }
 function salesRecordScore(merchant, record, amount=0, strict=false){
@@ -476,8 +497,8 @@ async function generateHuamao(){
   const startRow=positiveRow(document.getElementById('startRow').value || '2');
   const endVal=clean(document.getElementById('endRow').value);
   const endRow=endVal ? positiveRow(endVal) : Infinity;
-  if(!posF){alert('請先上傳 POS設備即時庫存.xlsx');return;}
-  if(endVal && endRow < startRow){alert('結束列數不可小於開始列數');return;}
+  if(!posF){reportOperationError('請先上傳 POS設備即時庫存.xlsx');return;}
+  if(endVal && endRow < startRow){reportOperationError('結束列數不可小於開始列數');return;}
   try{
     log(`讀取檔案：${posF.name}`);
     const sr=await readLegacyImport(posF,'legacyPos');
@@ -540,7 +561,7 @@ async function generateHuamao(){
     if(lastProcessedRow) saveLastRow(lastProcessedRow);
     const warnings=process.filter(r=>r['結果']!=='成功').length;
     document.getElementById('hmStatus').innerHTML=`<div class="${warnings?'warn':'ok'}">${uiIcon(warnings?'triangle-alert':'circle-check')} 生成完成：掃描 ${rows.length} 列，輸出 ${output.length} 筆，略過 ${skipped} 筆；${warnings} 筆含提醒，請核對「處理清單」。</div>`;
-  }catch(err){console.error(err);log('錯誤：'+(err.stack||err.message));document.getElementById('hmStatus').innerHTML='<div class="warn">'+escapeHtml(err.message||err)+'</div>';}
+  }catch(err){console.error(err);reportOperationError(err.message||String(err));document.getElementById('hmStatus').innerHTML='<div class="warn">'+escapeHtml(err.message||err)+'</div>';}
 }
 function buildInvoiceRequestIndex(rows){const map=new Map();for(const row of rows){const requestNo=cleanRequestNo(findVal(row,['請款單號','請款單編號']));if(!requestNo)continue;const one=parseInvoiceRows([row]).parsed[0]||null;if(map.has(normalizeRequestNo(requestNo))) throw new Error(`請款單號 ${requestNo} 重複，請先確認重複來源，避免覆寫金額。`);map.set(normalizeRequestNo(requestNo),{row,requestNo,items:one?one.items:[],merchant:one?one.merchant:'',memo:clean(findVal(row,['摘要說明','備註','摘要']))});}return map;}
 // Step 2：保留 POS 各設備欄位的獨立品項。即使同名設備分開填寫，也不可合併數量（例如發票紙捲 2 捲贈送、5 捲購買）。
@@ -559,9 +580,9 @@ function orderedPosItems(devices,invoiceItems=[]){
   }
   return out;
 }
-async function convert(){resetLog('開始生成請款單轉換結果...');document.getElementById('status').innerHTML='';const invF=document.getElementById('invoiceFile').files[0];const posF=document.getElementById('posFile').files[0];if(!invF||!posF){alert('請先上傳兩個檔案');return;}const sText=clean(document.getElementById('invoiceStartRow')?.value);const eText=clean(document.getElementById('invoiceEndRow')?.value);if(eText&&!sText)throw new Error('請同時填寫開始列，或將兩欄留空。');const startRow=sText?positiveRow(sText):0;const endRow=eText?positiveRow(eText):(startRow||0);if(startRow&&endRow<startRow){alert('結束列不可小於開始列');return;}
+async function convert(){resetLog('開始生成請款單轉換結果...');document.getElementById('status').innerHTML='';const invF=document.getElementById('invoiceFile').files[0];const posF=document.getElementById('posFile').files[0];if(!invF||!posF){reportOperationError('請先上傳兩個檔案');return;}const sText=clean(document.getElementById('invoiceStartRow')?.value);const eText=clean(document.getElementById('invoiceEndRow')?.value);if(eText&&!sText)throw new Error('請同時填寫開始列，或將兩欄留空。');const startRow=sText?positiveRow(sText):0;const endRow=eText?positiveRow(eText):(startRow||0);if(startRow&&endRow<startRow){reportOperationError('結束列不可小於開始列');return;}
 try{const [inv,recordsFromPos]=await Promise.all([readLegacyImport(invF,'legacyInvoice'),readLegacyImport(posF,'legacyIndex')]);const invoiceIndex=buildInvoiceRequestIndex(inv.rows);const pos={records:recordsFromPos};let records;if(startRow){records=pos.records.filter(r=>r.rowNum>=startRow&&r.rowNum<=endRow);log(`依 POS 列數處理：${startRow}～${endRow}`);}else{records=pos.records.filter(r=>normalizeRequestNo(r.requestNo)&&invoiceIndex.has(normalizeRequestNo(r.requestNo)));log('未指定列數：依請款單號精準對應 POS 列');}if(!records.length)throw new Error('沒有符合條件的 POS 資料；請確認列數、工作表及請款單號。');const seenRequests=new Set();for(const rec of records){const key=normalizeRequestNo(rec.requestNo);if(key&&invoiceIndex.has(key)){if(seenRequests.has(key))throw new Error(`POS 區間內請款單號 ${key} 對應多列，請確認總金額分配後分批處理，避免重複請款總金額。`);seenRequests.add(key);}}const output=[];let noInvoice=0,skipped=0;for(const rec of records){const entry=invoiceIndex.get(normalizeRequestNo(rec.requestNo))||null;if(!entry)noInvoice++;const items=orderedPosItems(rec.devices,entry?.items||[]);if(!items.length){skipped++;log(`第 ${rec.rowNum} 列沒有設備，已略過`);continue;}log(`POS 第 ${rec.rowNum} 列設備：${items.map(it=>`${it.item}*${it.qty}`).join('、')}`);const row=entry?.row||{};const invoiceNo=entry?.requestNo||rec.requestNo||'';const voucher=entry?clean(findVal(row,['憑證文件號碼','發票號碼'])):'';const voucherDate=entry?excelDateToText(findVal(row,['憑證日期','發票日期'])):'';const requestDate=entry?clean(findVal(row,['建檔日期','請款日期','繳款日期'])):'';const total=entry?clean(findVal(row,['金額','請款金額','含稅金額'])):'';let first=true;for(const it of items){const sale=salesPriceForItem(it.item);const cost=COST[standardItem(it.item)]||['',''];const vendor=vendorForItem(it.item);const isHuamao=vendor==='華茂';const isPartner=vendor==='拍檔';output.push({'SHOP ID':rec.shopId,'報價單編號':rec.quote,'峰潮下單日期':(isHuamao||isPartner)?'':rec.fcDate,'華茂下單日期':isHuamao?rec.hmDate:'','出貨廠商':isHuamao?'VAA0000037':'','出貨廠商ID':isHuamao?'華茂資訊':(isPartner?'拍檔':''),'商家名稱':rec.merchant,'設備':it.item,'銷售價(含稅)':sale[0],'試算未稅':sale[1],'數量':it.qty,'請款總金額':first?total:'','採購價(含稅)':cost[0],'採購價(未稅)':cost[1],'請款單號':invoiceNo,'發票號碼':voucher,'發票日期':voucherDate,'請款日期':requestDate,'備註':entry?entry.memo:`POS 第 ${rec.rowNum} 列｜無請款單資料`});first=false;}}
-if(!output.length)throw new Error('沒有可匯出的設備，請確認設備欄位及數量。');const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(output,{header:OUT_HEADERS}),'轉換結果');XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(makeStats(output)),'數量統計');XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(logLines.map(x=>[x])),'處理紀錄');XLSX.writeFile(wb,`請款單轉換結果_${formatToday()}.xlsx`);document.getElementById('status').innerHTML=`<div class="ok">轉換完成：掃描 ${records.length} 個 POS 列、輸出 ${output.length} 筆設備資料；其中 ${noInvoice} 列沒有請款單資料，仍已正常匯出。</div>`;}catch(err){console.error(err);log('錯誤：'+(err.stack||err.message));document.getElementById('status').innerHTML='<div class="warn">'+escapeHtml(err.message||err)+'</div>';}}
+if(!output.length)throw new Error('沒有可匯出的設備，請確認設備欄位及數量。');const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(output,{header:OUT_HEADERS}),'轉換結果');XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(makeStats(output)),'數量統計');XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(logLines.map(x=>[x])),'處理紀錄');XLSX.writeFile(wb,`請款單轉換結果_${formatToday()}.xlsx`);document.getElementById('status').innerHTML=`<div class="ok">轉換完成：掃描 ${records.length} 個 POS 列、輸出 ${output.length} 筆設備資料；其中 ${noInvoice} 列沒有請款單資料，仍已正常匯出。</div>`;}catch(err){console.error(err);reportOperationError(err.message||String(err));document.getElementById('status').innerHTML='<div class="warn">'+escapeHtml(err.message||err)+'</div>';}}
 
 function normalizeInvoiceNo(v){return clean(v).toUpperCase().replace(/[^A-Z0-9]/g,'');}
 function normalizeSalesNo(v){return clean(v).replace(/[^0-9A-Za-z]/g,'');}
@@ -683,7 +704,7 @@ async function compareHuamaoAr(){
   const importF=document.getElementById('hmImportFile').files[0];
   const arF=document.getElementById('hmArFile').files[0];
   const expectedPayDateInput=clean(document.getElementById('arExpectedPayDate')?.value || '');
-  if(!importF||!arF){alert('請先上傳「華茂款項匯入資訊」與「華茂應收帳款明細」兩個檔案');return;}
+  if(!importF||!arF){reportOperationError('請先上傳「華茂款項匯入資訊」與「華茂應收帳款明細」兩個檔案');return;}
   try{
     log(`讀取華茂款項匯入資訊：${importF.name}`);
     log(`讀取華茂應收帳款明細：${arF.name}`);
@@ -741,7 +762,7 @@ async function compareHuamaoAr(){
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(logLines.map(x=>[x])),'處理紀錄');
     XLSX.writeFile(wb,`華茂請款中心結果_v14_1_${formatToday()}.xlsx`);
     document.getElementById('arStatus').innerHTML=`<div class="ok">比對完成：尚未請款 ${unpaid.length} 筆，已請款 ${requested.length} 筆，金額不同 ${amountDiff.length} 筆，缺發票號碼待確認 ${missingInvoice.length} 筆。</div>`;
-  }catch(err){console.error(err);log('錯誤：'+(err.stack||err.message));document.getElementById('arStatus').innerHTML='<div class="warn">比對失敗：'+escapeHtml(err.message||err)+'</div>';}
+  }catch(err){console.error(err);reportOperationError(err.message||String(err));document.getElementById('arStatus').innerHTML='<div class="warn">比對失敗：'+escapeHtml(err.message||err)+'</div>';}
 }
 
 
@@ -826,7 +847,7 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.14#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.15#${name}"></use></svg>`;
 }
 // Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {
@@ -914,9 +935,9 @@ async function generateVendorMessages(){
     const startRow=positiveRow(document.getElementById('vendorStartRow')?.value);
     const endInput=clean(document.getElementById('vendorEndRow')?.value);
     const endRow=endInput ? positiveRow(endInput) : startRow;
-    if(!posF){alert('請先上傳 POS設備即時庫存.xlsx');return;}
-    if(!startRow){alert('請輸入開始列');return;}
-    if(endRow < startRow){alert('結束列不可小於開始列');return;}
+    if(!posF){reportOperationError('請先上傳 POS設備即時庫存.xlsx');return;}
+    if(!startRow){reportOperationError('請輸入開始列');return;}
+    if(endRow < startRow){reportOperationError('結束列不可小於開始列');return;}
     resetLog('開始生成廠商下單訊息...');
     log(`讀取 POS：${posF.name}`);
     log(`指定區間：${startRow} ~ ${endRow}`);
@@ -949,23 +970,25 @@ async function generateVendorMessages(){
     log(`已產生 ${results.length} 組下單訊息`);
     if(skipped.length) log('略過資料：\n'+skipped.slice(0,20).join('\n')+(skipped.length>20?`\n...共 ${skipped.length} 筆`:''));
     for(const r of results){ log(`已生成：${r.vendor}｜${r.merchant}｜列 ${r.rows.join(',')}｜${r.devices.map(d=>`${vendorItemName(d.item)}*${d.qty}`).join('+')}`); }
-    if(status) status.innerHTML=`<div class="ok">已產生 ${results.length} 組下單訊息；${skipped.length ? `略過 ${skipped.length} 列。` : '無略過資料。'}</div>`;
+    const message=`已產生 ${results.length} 組下單訊息。`+(skipped.length?`略過 ${skipped.length} 列，詳見處理紀錄。`:'');
+    if(status) status.innerHTML=`<div class="ok">${message}</div>`;
+    reportOperation(message,skipped.length?'warning':'success');
   }catch(err){
     console.error(err);
-    log('錯誤：'+(err.stack||err.message));
+    reportOperationError(err.message||String(err));
     if(status) status.innerHTML=`<div class="warn">生成失敗：${escapeHtml(err.message||err)}</div>`;
   }
 }
 async function copyTextFrom(id){
   const el=document.getElementById(id);
   const text=el ? el.value : '';
-  if(!text){alert('目前沒有可複製的內容');return;}
+  if(!text){reportOperationError('目前沒有可複製的內容');return;}
   try{
     await navigator.clipboard.writeText(text);
-    showProductToast('已複製到剪貼簿');
+    reportOperation('已複製到剪貼簿。','success');
   }catch(e){
-    el.focus(); el.select(); if(!document.execCommand('copy')){alert('複製失敗，已選取文字，請按 Ctrl+C。');return;}
-    showProductToast('已複製到剪貼簿');
+    el.focus(); el.select(); if(!document.execCommand('copy')){reportOperationError('複製失敗，已選取文字，請按 Ctrl+C。');return;}
+    reportOperation('已複製到剪貼簿。','success');
   }
 }
 
@@ -1006,8 +1029,8 @@ async function queryHuamaoStatus(){
   const arF=document.getElementById('hmArFile').files[0];
   const q=document.getElementById('arQueryText')?.value || '';
   const terms=parseQueryTerms(q);
-  if(!importF){alert('請先上傳「華茂款項匯入資訊.xlsx」');return;}
-  if(!terms.length){alert('請輸入發票號碼或銷貨單號');return;}
+  if(!importF){reportOperationError('請先上傳「華茂款項匯入資訊.xlsx」');return;}
+  if(!terms.length){reportOperationError('請輸入發票號碼或銷貨單號');return;}
   lastArQueryRows=[];displayArQueryResults([]);
   resetLog('開始查詢請款狀態...');
   try{
@@ -1068,16 +1091,16 @@ async function queryHuamaoStatus(){
     }
     lastArQueryRows=results;
     displayArQueryResults(results);
-    log(`查詢完成：${results.length} 筆`);
+    reportOperation(`已完成查詢，共 ${results.length} 筆。`,'success');
     const paid=results.filter(r=>r['狀態']==='已請款').length;
     const unpaid=results.filter(r=>r['狀態']==='尚未請款').length;
     const missing=results.filter(r=>r['狀態']==='查無資料').length;
     updateSummary(results.length,paid,unpaid,results.filter(r=>r['狀態'].startsWith('金額')).length,missing);
     log(`已請款 ${paid}｜尚未請款 ${unpaid}｜查無資料 ${missing}`);
-  }catch(err){console.error(err);log('錯誤：'+(err.stack||err.message));alert('查詢失敗：'+(err.message||err));}
+  }catch(err){console.error(err);reportOperationError('查詢失敗：'+(err.message||err));}
 }
 function exportArQueryResults(){
-  if(!lastArQueryRows.length){alert('請先查詢資料');return;}
+  if(!lastArQueryRows.length){reportOperationError('請先查詢資料');return;}
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(lastArQueryRows),'查詢請款狀態');
   XLSX.writeFile(wb,`華茂請款狀態查詢_v14_1_${formatToday()}.xlsx`);
@@ -1116,6 +1139,7 @@ document.getElementById('hmSalesFiles').addEventListener('change',e=>{
   }
   addSalesFiles(valid);e.target.value='';
   document.getElementById('hmStatus').textContent=errors.join('；');
+  if(errors.length)reportOperationError(errors.join('；'));
 });
 document.getElementById('clearSalesFiles').addEventListener('click',()=>{hmSalesFileList=[];renderSalesFileList();});
 renderSalesFileList();
@@ -1281,7 +1305,7 @@ async function runAction(action){
   const buttons=[...document.querySelectorAll('#legacyWorkflows button,#legacyWorkflows input,#legacyWorkflows textarea:not([readonly])')];
   const states=buttons.map(b=>b.disabled);
   buttons.forEach(b=>{b.disabled=true;b.setAttribute('aria-busy','true');});
-  try{await action();}catch(err){log('錯誤：'+(err.message||err));alert(err.message||String(err));}
+  try{await action();}catch(err){reportOperationError(err.message||String(err));}
   finally{buttons.forEach((b,i)=>{b.disabled=states[i];b.removeAttribute('aria-busy');});actionBusy=false;}
 }
 function updateSummary(total,paid=0,unpaid=0,diff=0,missing=0){
@@ -1372,6 +1396,7 @@ function showErpView() {
   for(const id of ['caseWorkspace','systemInfo'])show(id,view===id);
   const infoPage=info.includes(hash)?hash:'logPanel';
   for(const id of info)show(id,view==='systemInfo'&&infoPage===id);
+  if(view==='systemInfo'&&infoPage==='logPanel')flushLog();
   show('legacyWorkflows',view==='legacyWorkflows'||view==='ar');
   show('arDashboard',view==='ar');
   show('ar',view==='ar');
