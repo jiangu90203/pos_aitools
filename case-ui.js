@@ -7,13 +7,7 @@
   const money = n => n == null ? '—' : Number(n).toLocaleString('zh-TW', {maximumFractionDigits: 2});
   const selected = new Set();
   let state = Cases.create();
-  const sapPriceKey='posBilling:sapPrices:'+String(globalThis.location?.pathname||'/').replace(/index\.html$/,'');
-  let sapPriceStorageError=false;
-  try {
-    const savedPrices=localStorage.getItem(sapPriceKey);
-    if(savedPrices) Cases.setSapPrices(JSON.parse(savedPrices));
-  } catch { sapPriceStorageError=true; }
-  let current = '', staged = null, filterPage = 0, busy = false, dirty = false, stageToken = 0;
+  let current = '', staged = null, filterPage = 0, busy = false, stageToken = 0;
   let posImport = null, vendorPreview = null;
   let batchItems=[], pendingDocuments=[], batchView='', batchPage=0, batchAffected=new Set();
   let queuedFiles=[];
@@ -60,64 +54,6 @@
     }
     if (notify) reportOperation(message,tone);
   };
-  let saveTimer, changeVersion=0, workRevision=0, savingWork=false;
-  const workKey=String(globalThis.location?.pathname||'/').replace(/index\.html$/,'');
-  function localWork(mode, value){
-    return new Promise((resolve,reject)=>{
-      const request=indexedDB.open('pos-billing-workspace',1);
-      request.onupgradeneeded=()=>request.result.createObjectStore('work');
-      request.onblocked=()=>reject(Error('本機工作資料正在其他分頁使用。'));
-      request.onerror=()=>reject(request.error);
-      request.onsuccess=()=>{
-        const db=request.result;
-        try{
-          const tx=db.transaction('work',mode), store=tx.objectStore('work');
-          const result=store.get(workKey);
-          let conflict=false;
-          if(mode==='readwrite')result.onsuccess=()=>{
-            if((result.result?.revision??0)!==workRevision){
-              conflict=true;
-              tx.abort();
-            }else store.put({...value,revision:workRevision+1},workKey);
-          };
-          tx.oncomplete=()=>{db.close();resolve(result.result);};
-          tx.onabort=()=>{db.close();reject(conflict?Error('其他分頁已更新本機資料，請保留來源檔案。'):tx.error);};
-        }catch(err){db.close();reject(err);}
-      };
-    });
-  }
-  async function persistWork(){
-    if(savingWork)return;
-    savingWork=true;
-    const version=changeVersion;
-    try{
-      await localWork('readwrite',{data:state,selected:[...selected]});
-      workRevision++;
-      if(changeVersion===version){
-        dirty=false;
-        byId('caseSaveState').textContent='已儲存在此瀏覽器';
-      }
-    }catch(err){
-      byId('caseSaveState').textContent=err?.message==='其他分頁已更新本機資料，請保留來源檔案。'?
-        err.message:'本機儲存失敗，請保留來源檔案';
-    }finally{
-      savingWork=false;
-      if(changeVersion!==version){
-        clearTimeout(saveTimer);
-        saveTimer=setTimeout(persistWork,120);
-      }
-    }
-  }
-  const changed = () => {
-    dirty=true;
-    changeVersion++;
-    clearTimeout(saveTimer);
-    byId('caseSaveState').textContent=globalThis.indexedDB?'儲存至此瀏覽器…':'此工作階段的資料未儲存';
-    if(globalThis.indexedDB)saveTimer=setTimeout(persistWork,120);
-  };
-  window.addEventListener('beforeunload', event => {
-    if (dirty) { event.preventDefault(); event.returnValue = ''; }
-  });
   async function action(fn) {
     if (busy) return;
     busy = true;
@@ -262,14 +198,14 @@
       }
       recordActivity(posSummary({...posResult,new:added}),'info','即時庫存');
     }
-    let saved=0, sliceStart=performance.now();
+    let sliceStart=performance.now();
     const archives=new Map();
     for(const [i,item] of items.entries()){
       Object.assign(item,plan[i]);
       if(item.type==='duplicate'&&VendorDocs.refreshInvoice){
         try{
           const refreshed=await VendorDocs.refreshInvoice(state,item.doc,item.file);
-          if(refreshed){Object.assign(item,refreshed,{type:'linked'});saved++;}
+          if(refreshed)Object.assign(item,refreshed,{type:'linked'});
         }catch(err){item.reason=[item.reason,err.message].filter(Boolean).join(' ');}
         continue;
       }
@@ -280,9 +216,8 @@
         }
         const archiveKey=archives.get(item.file);
         VendorDocs.saveDecision(state,caseIndex.get(item.caseId).record,item,archiveKey);
-        if(!archiveKey)item.reason=[item.reason,'瀏覽器無法保存原始 PDF。請保留原始檔案。'].filter(Boolean).join(' ');
+        if(!archiveKey)item.reason=[item.reason,'無法暫存原始 PDF。請保留原始檔案。'].filter(Boolean).join(' ');
         item.type='linked';
-        saved++;
       }catch(err){
         item.type='unmatched';
         item.reason=err.message;
@@ -290,7 +225,6 @@
       if(performance.now()-sliceStart>12){await yieldUI();sliceStart=performance.now();}
     }
     pendingDocuments=batchItems.filter(item=>item.type==='unmatched'&&item.doc?.key);
-    if(saved)changed();
     renderBatch();
     render();
     const counts=batchCounts();
@@ -503,7 +437,7 @@
             <span class="case-meta">${e(d.parsed.id)} · ${d.parsed.warnings.length||d.pair?.issues?.length?'部分欄位待核對':'已配對'}</span>
             <div class="case-actions">
             <button type="button" class="case-btn" data-doc-inspect="${e(d.key)}">查看結果</button>
-            ${d.archiveKey?`<button type="button" class="case-btn" data-doc-download="${e(d.key)}">下載原始 PDF</button>`:''}
+            ${VendorDocs.original(d.archiveKey)?`<button type="button" class="case-btn" data-doc-download="${e(d.key)}">下載原始 PDF</button>`:''}
             <button type="button" class="case-btn" data-doc-remove="${e(d.key)}">${uiIcon('trash')} 移除</button>
             </div>${vendorFileControl(vendor,kind,'替換這份文件',d.key,!canImport)}</div>`).join('')}
           </div>`;
@@ -712,20 +646,14 @@
   }
   function renderSapPrices() {
     const count=Cases.sapPriceCount();
-    byId('caseSapPricesStatus').textContent=sapPriceStorageError?'瀏覽器未能讀取或保存固定單價設定，重新開啟可能需再匯入。'
-      :count?'已載入 '+count+' 項固定單價':'首次使用請選擇內部提供的 SAP_固定單價.json';
+    byId('caseSapPricesStatus').textContent=count?'已載入 '+count+' 項固定單價':'首次使用請選擇內部提供的 SAP_固定單價.json';
   }
   async function importSapPrices(file) {
     validateFile(file,['json']);
     if(file.size>64*1024) throw Error('SAP 固定單價設定檔須小於 64 KB。');
-    const profile=JSON.parse(await file.text());
-    Cases.setSapPrices(profile);
-    try {
-      localStorage.setItem(sapPriceKey,JSON.stringify(profile));
-      sapPriceStorageError=false;
-    } catch { sapPriceStorageError=true; }
+    Cases.setSapPrices(JSON.parse(await file.text()));
     renderSapPrices();
-    status(sapPriceStorageError?'固定單價已套用於本次工作階段。':'固定單價已保存，可重新匯出 SAP Key-in 準備表。');
+    status('固定單價已套用於本次作業。');
   }
   function clearPosFile() {
     posImport=null;
@@ -775,7 +703,6 @@
       selected.delete(id);
       if(current===id)current='';
     }
-    if(result.new||result.update||result.duplicates)changed();
     indexCases();
     indexBills();
   }
@@ -852,7 +779,6 @@
     state = next;
     showOrders=false;
     staged = null;
-    changed();
     render();
     status('已確認匯入「'+name+'」。',false,{tone:'success'});
   }
@@ -873,7 +799,6 @@
     if((state.cases.length||state.quotes.length||state.sap)&&!confirm('以舊版案件備份取代目前工作資料？'))return;
     const work=await ImportIO.excel(file,'work');
     restoreWorkspace(work);
-    changed();
     status('已載入 ' + state.cases.length + ' 個案件。',false,{tone:'success'});
     await runQueuedFiles();
   }
@@ -1039,7 +964,7 @@
       }
     }
     if (!c.docs.some(d => d.kind === kind && d.name === file.name)) c.docs.push({kind, name: file.name, summary});
-    changed(); render(); status('已加入附件參考。');
+    render(); status('已加入附件參考。');
   }
   root.addEventListener('input',event=>{
     if(event.target.form?.id==='caseQuotationForm')clearQuoteResult();
@@ -1069,10 +994,10 @@
       for(const c of visibleCases){
         if (target.checked) selected.add(c.id); else selected.delete(c.id);
       }
-      changed(); renderSelection();
+      renderSelection();
     } else if (target.dataset.select) {
       if (target.checked) selected.add(target.dataset.select); else selected.delete(target.dataset.select);
-      changed(); renderSelection();
+      renderSelection();
     } else if(staged&&target.dataset.requestChoice!==undefined){
       const i=Number(target.dataset.requestChoice);
       if(target.checked)staged.choices.set(i,true);else staged.choices.delete(i);
@@ -1084,7 +1009,6 @@
       const s = c.orders[v] ||= {};
       if (target.dataset.order === 'email') { s.email = target.checked; if (!s.email) s.line = false; }
       if (target.dataset.order === 'line' && s.email) s.line = target.checked;
-      changed();
       const line = target.closest('.case-message').querySelector('[data-order="line"]');
       line.checked = Boolean(s.line); line.disabled = !s.email;
     } else if (['caseVendor','caseDocumentFilter'].includes(target.id)) {
@@ -1127,8 +1051,8 @@
       action(async()=>{
         const d=VendorDocs.documents(order()).find(ref=>ref.key===b.dataset.docDownload);
         if(!d?.archiveKey)throw Error('找不到原始 PDF。');
-        const file=await VendorDocs.original(d.archiveKey);
-        if(!file)throw Error('這個瀏覽器沒有原始 PDF。請從原匯入裝置下載。');
+        const file=VendorDocs.original(d.archiveKey);
+        if(!file)throw Error('此頁尚未暫存原始 PDF，請重新匯入。');
         const url=URL.createObjectURL(file);
         const link=document.createElement('a');
         link.href=url;
@@ -1141,7 +1065,7 @@
     if(b.dataset.docRemove){
       const c=order(), d=c&&VendorDocs.documents(c).find(d=>d.key===b.dataset.docRemove);
       if(d&&confirm('移除這份文件？已儲存的發票或回填可在請款前整理個別管理。')){
-        c.docs.splice(c.docs.indexOf(d),1);vendorPreview=null;changed();renderList();renderDetail();
+        c.docs.splice(c.docs.indexOf(d),1);vendorPreview=null;renderList();renderDetail();
         status('已移除文件參考。');
       }
       return;
@@ -1167,7 +1091,7 @@
       const inv = state.invoices.find(i => i.key === b.dataset.detach);
       inv.links = inv.links.filter(l => l.caseId !== current);
       if (!inv.links.length) state.invoices = state.invoices.filter(i => i !== inv);
-      changed(); render();
+      render();
     }
     const handlers = {
       'cancel-doc':()=>{vendorPreview=null;renderVendorPreview();},
@@ -1180,9 +1104,9 @@
       close:closeDetail,
       'preview-prev':()=>{if(staged&&staged.page>0){staged.page--;renderPreview();}},
       'preview-next':()=>{if(staged&&(staged.page+1)*previewSize<staged.items.length){staged.page++;renderPreview();}},
-      review: () => { order().review = false; changed(); render(); },
-      'select-filter': () => { for(const c of lookup()) selected.add(c.id); changed(); renderSelection(); },
-      'clear-select': () => { selected.clear(); changed(); renderSelection(); },
+      review: () => { order().review = false; render(); },
+      'select-filter': () => { for(const c of lookup()) selected.add(c.id); renderSelection(); },
+      'clear-select': () => { selected.clear(); renderSelection(); },
       'export-selected':async()=>{
         const exportBook=exports[byId('caseExportKind').value];
         if(!exportBook)throw Error('請選擇匯出格式。');
@@ -1216,7 +1140,7 @@
         const archiveKey=await VendorDocs.archive(pending.file).catch(()=> '');
         VendorDocs.save(state,c,pending.doc,pending.replaceKey,f.has('linkInvoice'),false,{archiveKey});
         vendorPreview=null;
-        status('已儲存文件關聯。'+(archiveKey?'':'瀏覽器無法保存原始 PDF，請保留原始檔案。')+
+        status('已儲存文件關聯。'+(archiveKey?'':'無法暫存原始 PDF，請保留原始檔案。')+
           (f.has('linkInvoice')?'請再核對發票金額與設備。':''));
       } else if (form.id === 'caseInvoiceForm') {
         Cases.attachInvoice(state, c, Object.fromEntries(f), f.has('replace'));
@@ -1252,7 +1176,7 @@
         status('已儲存華茂對帳資料。');
       }
       const feedback = byId('caseStatus').textContent;
-      changed(); render();
+      render();
       status(feedback,false,{notify:false});
     });
   });
@@ -1269,13 +1193,6 @@
     event.preventDefault();
     drop.classList.remove('is-dragging');
     if(!busy)action(()=>importBatch(Array.from(event.dataTransfer.files)));
-  });
-  if(globalThis.indexedDB)action(async()=>{
-    const work=await localWork('readonly');
-    if(!work)return;
-    workRevision=work.revision??0;
-    restoreWorkspace({...work,data:Cases.restore(work.data)});
-    byId('caseSaveState').textContent='已載入此瀏覽器的工作資料';
   });
   const sourceMenu=byId('caseSourceMenu');
   document.addEventListener?.('click',event=>{

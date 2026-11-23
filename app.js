@@ -847,7 +847,7 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.18#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#${name}"></use></svg>`;
 }
 // Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {
@@ -1106,12 +1106,10 @@ function exportArQueryResults(){
   XLSX.writeFile(wb,`華茂請款狀態查詢_v14_1_${formatToday()}.xlsx`);
 }
 
-const HM_LAST_ROW_KEY='equipmentBillingAssistant.lastHuamaoRow';
-function getSavedLastRow(){
-  try{const v=Number(localStorage.getItem(HM_LAST_ROW_KEY)||''); return Number.isFinite(v)&&v>0?v:0;}catch(e){return 0;}
-}
+let previousHuamaoRow=0;
+function getSavedLastRow(){ return previousHuamaoRow; }
 function saveLastRow(rowNum){
-  try{if(Number.isFinite(rowNum)&&rowNum>0)localStorage.setItem(HM_LAST_ROW_KEY,String(rowNum));}catch(e){}
+  if(Number.isFinite(rowNum)&&rowNum>0)previousHuamaoRow=rowNum;
   updateLastRowInfo();
 }
 function updateLastRowInfo(){
@@ -1145,12 +1143,10 @@ document.getElementById('clearSalesFiles').addEventListener('click',()=>{hmSales
 renderSalesFileList();
 }
 
-const VENDOR_LAST_ROW_KEY='equipmentBillingAssistant.lastVendorMessageRow';
-function getSavedVendorLastRow(){
-  try{const v=Number(localStorage.getItem(VENDOR_LAST_ROW_KEY)||''); return Number.isFinite(v)&&v>0?v:0;}catch(e){return 0;}
-}
+let previousVendorRow=0;
+function getSavedVendorLastRow(){ return previousVendorRow; }
 function saveVendorLastRow(rowNum){
-  try{if(Number.isFinite(rowNum)&&rowNum>0)localStorage.setItem(VENDOR_LAST_ROW_KEY,String(rowNum));}catch(e){}
+  if(Number.isFinite(rowNum)&&rowNum>0)previousVendorRow=rowNum;
   updateVendorLastRowInfo();
 }
 function updateVendorLastRowInfo(){

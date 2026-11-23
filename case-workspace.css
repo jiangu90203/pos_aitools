@@ -154,9 +154,8 @@ button:not(:disabled), summary { cursor:pointer; }
 .erp-toolbar .case-filter { flex:1 1 495px; margin:0; gap:.45rem; grid-template-columns:minmax(170px,2.1fr) repeat(2,minmax(98px,1fr)); }
 .erp-toolbar .case-filter label { gap:.15rem; font-size:.79rem; }
 
-.erp-sources .case-import { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .case-messages { margin:.28rem 0; justify-content:flex-start; min-height:1.4em; }
-#caseSaveState { margin-inline-start:auto; }
+.case-session-note { margin-inline-start:auto; }
 #caseBusy { font-weight:700; color:var(--accent); }
 .case-list-tools { margin:.45rem 0; }
 .case-table-scroll { margin:0; border-radius:7px 7px 0 0; scrollbar-gutter:stable; }
@@ -231,7 +230,7 @@ button:not(:disabled), summary { cursor:pointer; }
   .main,.panel,.toolCard { padding:8px; }
   .erp-toolbar .case-filter { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .erp-toolbar .case-filter label:first-child { grid-column:1/-1; }
-  .workflowGrid,.vendorOutputs,.erp-sources .case-import { grid-template-columns:minmax(0,1fr); }
+  .workflowGrid,.vendorOutputs { grid-template-columns:minmax(0,1fr); }
   .dashGrid { grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); }
   .erp-drawer { width:100%; padding:10px; }
   .erp-drawer > .case-detail-top:first-child { top:-10px; }
@@ -527,7 +526,6 @@ button:not(:disabled), summary { cursor:pointer; }
   body:has(.erp-drawer:not([hidden])) .erp-notifications { inset-inline-end:calc(min(42vw,640px) + 14px); }
 }
 @media(max-width:1050px) {
-  .erp-sources .case-import { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .main { padding:12px; }
   .dashGrid { grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); }
 }
@@ -551,7 +549,6 @@ button:not(:disabled), summary { cursor:pointer; }
   .erp-toast { height:94px; }
 }
 @media(max-width:520px) {
-  .erp-sources .case-import { grid-template-columns:minmax(0,1fr); }
   .erp-theme-button { width:38px; padding:0; }
   #erpThemeLabel { display:none; }
 }
@@ -569,7 +566,9 @@ button:not(:disabled), summary { cursor:pointer; }
   z-index:8;
   width:min(54rem,100%);
   max-height:min(68vh,34rem);
+  max-height:min(68dvh,34rem);
   overflow:auto;
+  overscroll-behavior:contain;
   box-sizing:border-box;
   padding:.75rem;
   border:1px solid var(--line);
@@ -577,7 +576,19 @@ button:not(:disabled), summary { cursor:pointer; }
   background:var(--surface);
   box-shadow:0 8px 26px var(--shadow);
 }
-.case-source-body .case-import { margin-block:0 .65rem; }
+.case-source-body .case-import {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));
+  margin-block:0 .65rem;
+}
+.case-source-body .import-field { grid-template-columns:minmax(0,1fr); }
+.case-source-body .case-fields { grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr)); }
+.case-source-body .case-request-vendor { grid-template-columns:auto minmax(0,1fr); }
+.case-source-body :is(input,select) {
+  width:100%;
+  min-width:0;
+  box-sizing:border-box;
+}
+.case-source-body .small { overflow-wrap:anywhere; }
 @media(prefers-reduced-motion:no-preference) {
   .case-workspace :is(.case-btn,.case-upload,input,select) {
     transition:background-color 140ms ease,border-color 140ms ease,box-shadow 140ms ease;

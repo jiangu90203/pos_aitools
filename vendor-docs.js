@@ -687,39 +687,20 @@ const VendorDocs = (() => {
     if(priorIssues.some(issue=>issue!==connectorDifference))return null;
     const pair={key:filingKey(doc),related:[slip.key],issues:diff.notes,orderFallback:''};
     save(state,order,doc,stored.key,true,true,{pair,archiveKey:stored.archiveKey,requiresReview:Boolean(diff.notes.length)});
+    originals.set(stored.archiveKey,file);
     slip.pair={...pair,related:[doc.key]};
     return {caseId:order.id,pair,reason:diff.notes.join('；')};
   }
-  function archiveRequest(mode,run) {
-    if(!globalThis.indexedDB)throw Error('此瀏覽器無法使用原始 PDF 儲存空間。');
-    return new Promise((resolve,reject)=>{
-      const request=indexedDB.open('pos-billing-attachments',1);
-      request.onupgradeneeded=()=>request.result.createObjectStore('pdf');
-      request.onerror=()=>reject(request.error);
-      request.onblocked=()=>reject(Error('原始 PDF 儲存空間暫時被其他分頁鎖定。'));
-      request.onsuccess=()=>{
-        const db=request.result;
-        try{
-          const tx=db.transaction('pdf',mode);
-          const result=run(tx.objectStore('pdf'));
-          tx.oncomplete=()=>{db.close();resolve(result.result);};
-          tx.onabort=()=>{db.close();reject(tx.error);};
-        }catch(err){db.close();reject(err);}
-      };
-    });
-  }
+  const originals=new Map();
   async function fileKey(file) {
     const digest=await crypto.subtle.digest('SHA-256',await readArrayBuffer(file));
     return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
   }
   async function archive(file) {
     const key=await fileKey(file);
-    await archiveRequest('readwrite',store=>store.put(file,key));
+    originals.set(key,file);
     return key;
   }
-  async function original(key) {
-    if(!/^[a-f\d]{64}$/.test(key))throw Error('找不到原始 PDF。');
-    return await archiveRequest('readonly',store=>store.get(key));
-  }
+  const original = key => originals.get(key);
   return {kinds,read,readRecords,association,save,documents,pageLabel,invoiceFields,planBatch,saveDecision,refreshInvoice,archive,original};
 })();
