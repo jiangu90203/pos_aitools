@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>設備請款助手 Pro v15.19</title>
+  <title>設備請款助手 Pro v15.21</title>
   <script>
   (() => {
     const failures = new Set();
@@ -21,7 +21,7 @@
     }, true);
     document.addEventListener('DOMContentLoaded', () => {
       if (window.XLSX?.version !== '0.20.3' || typeof window.XLSX?.read !== 'function') showFailure('首頁內建 Excel 元件');
-      if (typeof SiteAssets === 'undefined' || SiteAssets.release !== '15.19') showFailure('assets.js');
+      if (typeof SiteAssets === 'undefined' || SiteAssets.release !== '15.21') showFailure('assets.js');
       if (typeof WorkspaceUI === 'undefined') showFailure('workspace-ui.js');
       if (typeof escapeHtml !== 'function') showFailure('app.js');
       if (typeof Cases === 'undefined') showFailure('case-data.js');
@@ -45,11 +45,11 @@
   <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="設備請款助手 Pro，設備採購與請款工作台" />
   <meta name="twitter:card" content="summary_large_image" />
-  <link rel="icon" sizes="16x16 32x32 48x48" href="favicon.ico?v=15.19" />
-  <link rel="icon" type="image/svg+xml" sizes="any" href="brand/brand.svg?v=15.19" />
-  <link rel="apple-touch-icon" sizes="180x180" href="brand/apple-touch-icon.png?v=15.19" />
-  <link rel="manifest" href="manifest.webmanifest?v=15.19" />
-  <link data-site-core rel="stylesheet" href="case-workspace.css?v=15.19" />
+  <link rel="icon" sizes="16x16 32x32 48x48" href="favicon.ico?v=15.21" />
+  <link rel="icon" type="image/svg+xml" sizes="any" href="brand/brand.svg?v=15.21" />
+  <link rel="apple-touch-icon" sizes="180x180" href="brand/apple-touch-icon.png?v=15.21" />
+  <link rel="manifest" href="manifest.webmanifest?v=15.21" />
+  <link data-site-core rel="stylesheet" href="case-workspace.css?v=15.21" />
 </head>
 <body>
 
@@ -60,8 +60,8 @@
     </button>
     <a class="erp-brand" href="https://github.com/jiangu90203/pos_aitools" target="_blank" rel="noopener noreferrer" aria-label="設備請款助手 GitHub 專案（另開分頁）" title="開啟 GitHub 專案">
       <span class="erp-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M11 7H7v18h18v-5M11 7V4h10l4 4v4M11 7v14h6M15 10h5m-5 5h3"/><path class="erp-mark-check" d="m20 17 3 3 5-6"/></svg></span>
-      <strong>設備請款助手</strong><small class="erp-version">v15.19</small>
-      <svg class="ui-icon erp-brand-external" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#external-link"></use></svg>
+      <strong>設備請款助手</strong><small class="erp-version">v15.21</small>
+      <svg class="ui-icon erp-brand-external" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#external-link"></use></svg>
     </a>
     <button type="button" class="erp-shell-button erp-theme-button" id="erpThemeToggle" aria-label="切換深色模式" title="切換深色模式">
       <svg class="ui-icon erp-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/></svg>
@@ -71,10 +71,10 @@
   </header>
   <aside class="sidebar" id="erpSidebar">
     <nav class="nav" aria-label="工作區">
-      <a href="#caseWorkspace" data-erp-view="caseWorkspace" title="主控台"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#layout-dashboard"></use></svg><span>主控台</span></a>
-      <a href="#legacyWorkflows" data-erp-view="legacyWorkflows" title="檔案直轉"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#arrow-left-right"></use></svg><span>檔案直轉</span></a>
-      <a href="#ar" data-erp-view="ar" title="華茂對帳"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#receipt-text"></use></svg><span>華茂對帳</span></a>
-      <a href="#systemInfo" data-erp-view="systemInfo" title="系統資訊"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#info"></use></svg><span>系統資訊</span></a>
+      <a href="#caseWorkspace" data-erp-view="caseWorkspace" title="主控台"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#layout-dashboard"></use></svg><span>主控台</span></a>
+      <a href="#legacyWorkflows" data-erp-view="legacyWorkflows" title="檔案直轉"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#arrow-left-right"></use></svg><span>檔案直轉</span></a>
+      <a href="#ar" data-erp-view="ar" title="華茂對帳"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#receipt-text"></use></svg><span>華茂對帳</span></a>
+      <a href="#systemInfo" data-erp-view="systemInfo" title="系統資訊"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#info"></use></svg><span>系統資訊</span></a>
     </nav>
   </aside>
   <main class="main" id="home">
@@ -113,12 +113,12 @@
         </details>
       </header>
       <div class="erp-toolbar">
-        <label id="caseBatchDrop" class="case-upload erp-primary" title="即時庫存、銷貨單與發票匯入"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#upload"></use></svg> 文件匯入<input id="caseBatchFiles" aria-describedby="caseBatchImportHint" type="file" accept=".xlsx,.xls,.pdf,.json,application/pdf" multiple></label>
+        <label id="caseBatchDrop" class="case-upload erp-primary" title="即時庫存、銷貨單與發票匯入"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#upload"></use></svg> 文件匯入<input id="caseBatchFiles" aria-describedby="caseBatchImportHint" type="file" accept=".xlsx,.xls,.pdf,.json,application/pdf" multiple></label>
         <span id="caseBatchImportHint" class="erp-visually-hidden">即時庫存、銷貨單與發票匯入</span>
         <div class="case-filter">
-          <label><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#search"></use></svg> 搜尋案件</span><input type="search" id="caseSearch" autocomplete="off" placeholder="報價單號、公司或 SHOP ID"></label>
+          <label><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#search"></use></svg> 搜尋案件</span><input type="search" id="caseSearch" autocomplete="off" placeholder="報價單號、公司或 SHOP ID"></label>
           <label>供應商<select id="caseVendor"><option value="">全部</option><option>拍檔</option><option>華茂</option></select></label>
-          <label><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#list-filter"></use></svg> 文件狀態</span><select id="caseDocumentFilter"><option value="">全部</option><option value="complete">文件齊全</option><option value="missing">文件缺漏</option><option value="review">有待確認</option></select></label>
+          <label><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#list-filter"></use></svg> 文件狀態</span><select id="caseDocumentFilter"><option value="">全部</option><option value="complete">文件齊全</option><option value="missing">文件缺漏</option><option value="review">有待確認</option></select></label>
         </div>
       </div>
       <div id="caseBatchQueue" class="case-actions" hidden>
@@ -127,13 +127,13 @@
       </div>
       <section id="caseBatchResults" class="erp-batch-results" aria-label="文件匯入結果" hidden></section>
       <section id="casePosRange" class="case-range" aria-labelledby="casePosRangeTitle" hidden>
-        <h3 id="casePosRangeTitle"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#list-start"></use></svg> 選擇匯入列範圍</h3>
+        <h3 id="casePosRangeTitle"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#list-start"></use></svg> 選擇匯入列範圍</h3>
         <p id="casePosRangeInfo" class="case-meta"></p>
         <div class="case-range-controls">
           <label>起始列<input id="casePosFrom" autocomplete="off" type="number" min="1" step="1" inputmode="numeric" required></label>
           <label>結束列<input id="casePosTo" autocomplete="off" type="number" min="1" step="1" inputmode="numeric" required></label>
           <div class="case-actions">
-            <button type="button" class="case-btn primary" data-case-action="apply-pos-range"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#check"></use></svg> 匯入所選列</button>
+            <button type="button" class="case-btn primary" data-case-action="apply-pos-range"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#check"></use></svg> 匯入所選列</button>
             <button type="button" class="case-btn" data-case-action="clear-pos-file">取消選檔</button>
           </div>
         </div>
@@ -143,7 +143,7 @@
         <span class="case-session-note">資料只暫存於此頁，重新整理後清除。</span></div>
       <div id="casePreview" class="case-preview" tabindex="-1" hidden></div>
       <div class="case-list-tools"><strong id="caseCount"></strong><div class="case-actions">
-        <button type="button" class="case-btn" data-case-action="select-filter"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#check"></use></svg> 勾選全部符合案件</button>
+        <button type="button" class="case-btn" data-case-action="select-filter"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#check"></use></svg> 勾選全部符合案件</button>
         <button type="button" class="case-btn" data-case-action="clear-select">清除勾選</button>
       </div></div>
       <div class="erp-table-shell"><div id="caseTableViewport" class="case-table-scroll table-viewport" tabindex="0" aria-label="案件列表">
@@ -153,7 +153,7 @@
           <th scope="col">供應商</th><th scope="col">請款狀態</th><th scope="col">文件狀態</th><th scope="col">詳情</th>
         </tr></thead><tbody id="caseRows"></tbody></table>
       </div>
-        <button class="erp-resize" type="button" id="caseTableGrip" aria-label="調整表格高度。可拖曳、點按或用方向鍵微調" title="拖曳或點按調整表格高度" aria-controls="caseTableViewport"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#grip"></use></svg></button></div>
+        <button class="erp-resize" type="button" id="caseTableGrip" aria-label="調整表格高度。可拖曳、點按或用方向鍵微調" title="拖曳或點按調整表格高度" aria-controls="caseTableViewport"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#grip"></use></svg></button></div>
       <div class="case-pagination">
         <button type="button" class="case-btn" id="casePrev" data-case-action="prev">上一頁</button>
         <span id="casePage"></span>
@@ -166,11 +166,11 @@
           <option value="sap">SAP Key-in 準備表</option><option value="hm">華茂對帳</option>
         </select></label>
         <label id="casePayDateLabel" hidden>預計撥款日<input id="casePayDate" type="date"></label>
-        <button type="button" class="case-btn primary" data-case-action="export-selected"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#download"></use></svg> 下載 Excel</button>
-        <button type="button" id="caseOrderToggle" class="case-btn" data-case-action="toggle-order" aria-controls="caseOrderSection" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#send"></use></svg> 廠商下單</button>
+        <button type="button" class="case-btn primary" data-case-action="export-selected"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#download"></use></svg> 下載 Excel</button>
+        <button type="button" id="caseOrderToggle" class="case-btn" data-case-action="toggle-order" aria-controls="caseOrderSection" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#send"></use></svg> 廠商下單</button>
       </div>
       <section id="caseOrderSection" class="case-exports" aria-labelledby="caseOrdersTitle" hidden>
-        <h3 id="caseOrdersTitle"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#send"></use></svg> 廠商下單</h3>
+        <h3 id="caseOrdersTitle"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#send"></use></svg> 廠商下單</h3>
         <p class="case-meta">Gmail 預填網址會包含信件及收件資訊。敏感內容可分別複製主旨及內文，再手動開啟 Gmail。請在 Gmail 核對登入帳號並手動加入附件。</p>
         <p id="caseOrderFeedback" class="case-meta" role="status"></p>
         <div id="caseOrderPreview"></div>
@@ -179,13 +179,13 @@
     </section>
     <div id="legacyWorkflows" class="legacy-workflows" hidden>
     <section id="arDashboard" class="panel">
-      <div class="panelTitle"><span class="flowerDot"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#chart-no-axes-column"></use></svg></span>今日處理摘要 <span class="small">（本次對帳或查詢結果；已請款代表存在匯入檔，不代表已付款）</span></div>
+      <div class="panelTitle"><span class="flowerDot"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#chart-no-axes-column"></use></svg></span>今日處理摘要 <span class="small">（本次對帳或查詢結果；已請款代表存在匯入檔，不代表已付款）</span></div>
       <div class="dashGrid">
-        <div class="stat blue"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#clipboard-list"></use></svg></div><div><div class="label">本次處理筆數</div><div class="num">— <small>筆</small></div></div></div>
-        <div class="stat green"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#circle-check"></use></svg></div><div><div class="label">已請款</div><div class="num">— <small>筆</small></div></div></div>
-        <div class="stat yellow"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#clock"></use></svg></div><div><div class="label">尚未請款</div><div class="num">— <small>筆</small></div></div></div>
-        <div class="stat pink"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#triangle-alert"></use></svg></div><div><div class="label">金額不同</div><div class="num">— <small>筆</small></div></div></div>
-        <div class="stat purple"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#file-search"></use></svg></div><div><div class="label">未找到</div><div class="num">— <small>筆</small></div></div></div>
+        <div class="stat blue"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#clipboard-list"></use></svg></div><div><div class="label">本次處理筆數</div><div class="num">— <small>筆</small></div></div></div>
+        <div class="stat green"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#circle-check"></use></svg></div><div><div class="label">已請款</div><div class="num">— <small>筆</small></div></div></div>
+        <div class="stat yellow"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#clock"></use></svg></div><div><div class="label">尚未請款</div><div class="num">— <small>筆</small></div></div></div>
+        <div class="stat pink"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#triangle-alert"></use></svg></div><div><div class="label">金額不同</div><div class="num">— <small>筆</small></div></div></div>
+        <div class="stat purple"><div class="icon"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#file-search"></use></svg></div><div><div class="label">未找到</div><div class="num">— <small>筆</small></div></div></div>
       </div>
     </section>
     <section class="workflowGrid">
@@ -229,40 +229,40 @@
 BL83558882
 20260624001"></textarea>
           <div class="small">會比對上方已上傳的「華茂款項匯入資訊」與「華茂應收帳款明細」，判斷是否已請款、預計撥款日與金額。</div>
-          <div class="rowTools"><button type="button" class="miniBtn" id="arQueryBtn">查詢狀態</button><button type="button" class="miniBtn" id="arQueryExportBtn"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#download"></use></svg> 匯出查詢結果</button></div>
+          <div class="rowTools"><button type="button" class="miniBtn" id="arQueryBtn">查詢狀態</button><button type="button" class="miniBtn" id="arQueryExportBtn"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#download"></use></svg> 匯出查詢結果</button></div>
         </div>
         <div class="erp-table-shell"><div id="arQueryResult" role="status" aria-live="polite" class="queryResults table-viewport" tabindex="0" aria-label="華茂發票查詢結果"><div class="small">輸入發票號碼或銷貨單號後，可快速回覆廠商是否已請款。</div></div>
-        <button class="erp-resize" type="button" id="arTableGrip" aria-label="調整表格高度。可拖曳、點按或用方向鍵微調" title="拖曳或點按調整表格高度" aria-controls="arQueryResult"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#grip"></use></svg></button></div>
+        <button class="erp-resize" type="button" id="arTableGrip" aria-label="調整表格高度。可拖曳、點按或用方向鍵微調" title="拖曳或點按調整表格高度" aria-controls="arQueryResult"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#grip"></use></svg></button></div>
       </div>
     </section>
     </div>
     <section id="systemInfo" class="panel erp-system" aria-labelledby="systemTitle" hidden>
-      <h1 id="systemTitle"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#info"></use></svg> 系統資訊</h1>
+      <h1 id="systemTitle"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#info"></use></svg> 系統資訊</h1>
       <nav class="case-actions erp-info-nav" aria-label="系統資訊頁籤">
-        <a class="case-btn" href="#logPanel" data-info-page="logPanel"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#clock"></use></svg> 處理紀錄</a>
-        <a class="case-btn" href="#rules" data-info-page="rules"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#settings"></use></svg> 轉換規則</a>
-        <a class="case-btn" href="#helpPanel" data-info-page="helpPanel"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#book-open"></use></svg> 使用說明</a>
+        <a class="case-btn" href="#logPanel" data-info-page="logPanel"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#clock"></use></svg> 處理紀錄</a>
+        <a class="case-btn" href="#rules" data-info-page="rules"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#settings"></use></svg> 轉換規則</a>
+        <a class="case-btn" href="#helpPanel" data-info-page="helpPanel"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#book-open"></use></svg> 使用說明</a>
       </nav>
     <section class="panel" id="logPanel" hidden>
       <div class="erp-log-head">
-        <h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#clock"></use></svg> 處理紀錄</h2>
+        <h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#clock"></use></svg> 處理紀錄</h2>
         <span id="logCount" class="small"></span>
         <button type="button" id="logToggle" class="miniBtn" aria-controls="log" aria-expanded="false" hidden>顯示全部</button>
       </div>
       <div class="log" id="log" tabindex="0" aria-label="本次工作階段的處理紀錄">尚無處理紀錄。</div>
     </section>
-    <section class="panel rules" id="rules" hidden><div class="panelTitle"><span class="flowerDot"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#settings"></use></svg></span>轉換規則</div><div><span class="pill">T823/T82 → EPSON發票機</span><span class="pill">M303發票機(WIFI) → WIFI發票機(M303)</span><span class="pill">華茂匯入可指定起訖列</span><span class="pill">銷貨單 PDF 自動抓發票</span><span class="pill">請款單轉換沿用 v8</span><span class="pill">應收帳款 PDF/Excel 對帳</span><span class="pill">華茂／拍檔直出下單訊息</span><span class="pill">指定區間生成廠商下單訊息</span></div><div class="small">POS 只讀取「下單設備資料」分頁；商品數量優先依設備欄名配對；沒有具名欄位時，華茂匯入／廠商下單依 K/L、M/N、O/P、Q/R、S/T 備援讀取。保留 Excel 上傳流程、既有價格及廠商分流；已強化數量驗證、重複單號檢查及資料安全。廠商下單訊息可指定開始/結束列，並依商家與收件資訊自動分組；Email 內文不再附簽名檔。</div></section>
+    <section class="panel rules" id="rules" hidden><div class="panelTitle"><span class="flowerDot"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#settings"></use></svg></span>轉換規則</div><div><span class="pill">T823/T82 → EPSON發票機</span><span class="pill">M303發票機(WIFI) → WIFI發票機(M303)</span><span class="pill">華茂匯入可指定起訖列</span><span class="pill">銷貨單 PDF 自動抓發票</span><span class="pill">請款單轉換沿用 v8</span><span class="pill">應收帳款 PDF/Excel 對帳</span><span class="pill">華茂／拍檔直出下單訊息</span><span class="pill">指定區間生成廠商下單訊息</span></div><div class="small">POS 只讀取「下單設備資料」分頁；商品數量優先依設備欄名配對；沒有具名欄位時，華茂匯入／廠商下單依 K/L、M/N、O/P、Q/R、S/T 備援讀取。保留 Excel 上傳流程、既有價格及廠商分流；已強化數量驗證、重複單號檢查及資料安全。廠商下單訊息可指定開始/結束列，並依商家與收件資訊自動分組；Email 內文不再附簽名檔。</div></section>
       <section id="helpPanel" class="panel" hidden>
-        <h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#book-open"></use></svg> 使用說明</h2>
+        <h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#book-open"></use></svg> 使用說明</h2>
         <ol>
           <li>一次選取 POS Excel 與銷貨單／發票 PDF，即可自動匯入對應案件。</li>
           <li>配對完成後可下載本批歸檔 ZIP，內含分案 PDF 及 Excel。</li>
           <li>工作資料只暫存於此頁。請在重新整理或關閉前匯出需要的成果。</li>
         </ol>
-        <a class="case-btn" href="docs/USER_GUIDE.md?v=15.19" target="_blank" rel="noopener"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#external-link"></use></svg> 開啟完整使用說明</a>
+        <a class="case-btn" href="docs/USER_GUIDE.md?v=15.21" target="_blank" rel="noopener"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#external-link"></use></svg> 開啟完整使用說明</a>
       </section>
     </section>
-    <div class="footer">© 2026 設備請款工作台 · v15.19</div>
+    <div class="footer">© 2026 設備請款工作台 · v15.21</div>
   </main>
 </div>
 
@@ -301,14 +301,14 @@ a=bw(aw(t.messages[0].data)[1][0].data);n=Pw({deps:[1],location:r[a].location,ty
 t.sheetStubs=true}if(t.type=="array"){t.type="binary";var a=xk(e,t);t.type="array";return R(a)}var n=0;if(t.sheet){if(typeof t.sheet=="number")n=t.sheet;else n=e.SheetNames.indexOf(t.sheet);if(!e.SheetNames[n])throw new Error("Sheet not found: "+t.sheet+" : "+typeof t.sheet)}switch(t.bookType||"xlsb"){case"xml":;case"xlml":return Ek(Ug(e,t),t);case"slk":;case"sylk":return Ek(Ql.from_sheet(e.Sheets[e.SheetNames[n]],t,e),t);case"htm":;case"html":return Ek(Sb(e.Sheets[e.SheetNames[n]],t),t);case"txt":return Ck(Uk(e.Sheets[e.SheetNames[n]],t),t);case"csv":return Ek(Mk(e.Sheets[e.SheetNames[n]],t),t,"\ufeff");case"dif":return Ek(eo.from_sheet(e.Sheets[e.SheetNames[n]],t),t);case"dbf":return _k(ql.from_sheet(e.Sheets[e.SheetNames[n]],t),t);case"prn":return Ek(to.from_sheet(e.Sheets[e.SheetNames[n]],t),t);case"rtf":return Ek(Ko(e.Sheets[e.SheetNames[n]],t),t);case"eth":return Ek(ro.from_sheet(e.Sheets[e.SheetNames[n]],t),t);case"fods":return Ek(Hb(e,t),t);case"wk1":return _k(no.sheet_to_wk1(e.Sheets[e.SheetNames[n]],t),t);case"wk3":return _k(no.book_to_wk3(e,t),t);case"biff2":if(!t.biff)t.biff=2;case"biff3":if(!t.biff)t.biff=3;case"biff4":if(!t.biff)t.biff=4;return _k(kb(e,t),t);case"biff5":if(!t.biff)t.biff=5;case"biff8":;case"xla":;case"xls":if(!t.biff)t.biff=8;return yk(e,t);case"xlsx":;case"xlsm":;case"xlam":;case"xlsb":;case"numbers":;case"ods":return kk(e,t);default:throw new Error("Unrecognized bookType |"+t.bookType+"|");}}function Ok(e){if(e.bookType)return;var r={xls:"biff8",htm:"html",slk:"sylk",socialcalc:"eth",Sh33tJS:"WTF"};var t=e.file.slice(e.file.lastIndexOf(".")).toLowerCase();if(t.match(/^\.[a-z]+$/))e.bookType=t.slice(1);e.bookType=r[e.bookType]||e.bookType}function Ik(e,r,t){var a=t||{};a.type="file";a.file=r;Ok(a);return xk(e,a)}function Rk(e,r,t){var a=t||{};a.type="file";a.file=r;Ok(a);return Sk(e,a)}function Nk(e,r,t,a){var n=t||{};n.type="file";n.file=e;Ok(n);n.type="buffer";var i=a;if(!(i instanceof Function))i=t;return er.writeFile(e,xk(r,n),i)}function Fk(e,r,t,a,n,i,s){var f=Wa(t);var l=s.defval,o=s.raw||!Object.prototype.hasOwnProperty.call(s,"raw");var c=true,h=e["!data"]!=null;var u=n===1?[]:{};if(n!==1){if(Object.defineProperty)try{Object.defineProperty(u,"__rowNum__",{value:t,enumerable:false})}catch(d){u.__rowNum__=t}else u.__rowNum__=t}if(!h||e["!data"][t])for(var v=r.s.c;v<=r.e.c;++v){var p=h?(e["!data"][t]||[])[v]:e[a[v]+f];if(p==null||p.t===undefined){if(l===undefined)continue;if(i[v]!=null){u[i[v]]=l}continue}var m=p.v;switch(p.t){case"z":if(m==null)break;continue;case"e":m=m==0?null:void 0;break;case"s":;case"b":;case"n":if(!p.z||!Le(p.z))break;m=vr(m);if(typeof m=="number")break;case"d":if(!(s&&(s.UTC||s.raw===false)))m=Fr(new Date(m));break;default:throw new Error("unrecognized type "+p.t);}if(i[v]!=null){if(m==null){if(p.t=="e"&&m===null)u[i[v]]=null;else if(l!==undefined)u[i[v]]=l;else if(o&&m===null)u[i[v]]=null;else continue}else{u[i[v]]=(p.t==="n"&&typeof s.rawNumbers==="boolean"?s.rawNumbers:o)?m:tn(p,m,s)}if(m!=null)c=false}}return{row:u,isempty:c}}function Dk(e,r){if(e==null||e["!ref"]==null)return[];var t={t:"n",v:0},a=0,n=1,i=[],s=0,f="";var l={s:{r:0,c:0},e:{r:0,c:0}};var o=r||{};var c=o.range!=null?o.range:e["!ref"];if(o.header===1)a=1;else if(o.header==="A")a=2;else if(Array.isArray(o.header))a=3;else if(o.header==null)a=0;switch(typeof c){case"string":l=en(c);break;case"number":l=en(e["!ref"]);l.s.r=c;break;default:l=c;}if(a>0)n=0;var h=Wa(l.s.r);var u=[];var d=[];var v=0,p=0;var m=e["!data"]!=null;var g=l.s.r,b=0;var w={};if(m&&!e["!data"][g])e["!data"][g]=[];var k=o.skipHidden&&e["!cols"]||[];var A=o.skipHidden&&e["!rows"]||[];for(b=l.s.c;b<=l.e.c;++b){if((k[b]||{}).hidden)continue;u[b]=$a(b);t=m?e["!data"][g][b]:e[u[b]+h];switch(a){case 1:i[b]=b-l.s.c;break;case 2:i[b]=u[b];break;case 3:i[b]=o.header[b-l.s.c];break;default:if(t==null)t={w:"__EMPTY",t:"s"};f=s=tn(t,null,o);p=w[s]||0;if(!p)w[s]=1;else{do{f=s+"_"+p++}while(w[f]);w[s]=p;w[f]=1}i[b]=f;}}for(g=l.s.r+n;g<=l.e.r;++g){if((A[g]||{}).hidden)continue;var T=Fk(e,l,g,u,a,i,o);if(T.isempty===false||(a===1?o.blankrows!==false:!!o.blankrows))d[v++]=T.row}d.length=v;return d}var Pk=/"/g;function Lk(e,r,t,a,n,i,s,f,l){var o=true;var c=[],h="",u=Wa(t);var d=e["!data"]!=null;var v=d&&e["!data"][t]||[];for(var p=r.s.c;p<=r.e.c;++p){if(!a[p])continue;var m=d?v[p]:e[a[p]+u];if(m==null)h="";else if(m.v!=null){o=false;h=""+(l.rawNumbers&&m.t=="n"?m.v:tn(m,null,l));for(var g=0,b=0;g!==h.length;++g)if((b=h.charCodeAt(g))===n||b===i||b===34||l.forceQuotes){h='"'+h.replace(Pk,'""')+'"';break}if(h=="ID"&&f==0&&c.length==0)h='"ID"'}else if(m.f!=null&&!m.F){o=false;h="="+m.f;if(h.indexOf(",")>=0)h='"'+h.replace(Pk,'""')+'"'}else h="";c.push(h)}if(l.strip)while(c[c.length-1]==="")--c.length;if(l.blankrows===false&&o)return null;return c.join(s)}function Mk(e,r){var t=[];var a=r==null?{}:r;if(e==null||e["!ref"]==null)return"";var n=en(e["!ref"]);var i=a.FS!==undefined?a.FS:",",s=i.charCodeAt(0);var f=a.RS!==undefined?a.RS:"\n",l=f.charCodeAt(0);var o="",c=[];var h=a.skipHidden&&e["!cols"]||[];var u=a.skipHidden&&e["!rows"]||[];for(var d=n.s.c;d<=n.e.c;++d)if(!(h[d]||{}).hidden)c[d]=$a(d);var v=0;for(var p=n.s.r;p<=n.e.r;++p){if((u[p]||{}).hidden)continue;o=Lk(e,n,p,c,s,l,i,v,a);if(o==null){continue}if(o||a.blankrows!==false)t.push((v++?f:"")+o)}return t.join("")}function Uk(e,r){if(!r)r={};r.FS="\t";r.RS="\n";var t=Mk(e,r);if(typeof a=="undefined"||r.type=="string")return t;var n=a.utils.encode(1200,t,"str");return String.fromCharCode(255)+String.fromCharCode(254)+n}function Bk(e,r){var t="",a,n="";if(e==null||e["!ref"]==null)return[];var i=en(e["!ref"]),s="",f=[],l;var o=[];var c=e["!data"]!=null;for(l=i.s.c;l<=i.e.c;++l)f[l]=$a(l);for(var h=i.s.r;h<=i.e.r;++h){s=Wa(h);for(l=i.s.c;l<=i.e.c;++l){t=f[l]+s;a=c?(e["!data"][h]||[])[l]:e[t];n="";if(a===undefined)continue;else if(a.F!=null){t=a.F;if(!a.f)continue;n=a.f;if(t.indexOf(":")==-1)t=t+":"+t}if(a.f!=null)n=a.f;else if(r&&r.values===false)continue;else if(a.t=="z")continue;else if(a.t=="n"&&a.v!=null)n=""+a.v;else if(a.t=="b")n=a.v?"TRUE":"FALSE";else if(a.w!==undefined)n="'"+a.w;else if(a.v===undefined)continue;else if(a.t=="s")n="'"+a.v;else n=""+a.v;o[o.length]=t+"="+n}}return o}function Wk(e,r,t){var a=t||{};var n=e?e["!data"]!=null:a.dense;if(b!=null&&n==null)n=b;var i=+!a.skipHeader;var s=e||{};if(!e&&n)s["!data"]=[];var f=0,l=0;if(s&&a.origin!=null){if(typeof a.origin=="number")f=a.origin;else{var o=typeof a.origin=="string"?Ka(a.origin):a.origin;f=o.r;l=o.c}}var c={s:{c:0,r:0},e:{c:l,r:f+r.length-1+i}};if(s["!ref"]){var h=en(s["!ref"]);c.e.c=Math.max(c.e.c,h.e.c);c.e.r=Math.max(c.e.r,h.e.r);if(f==-1){f=h.e.r+1;c.e.r=f+r.length-1+i}}else{if(f==-1){f=0;c.e.r=r.length-1+i}}var u=a.header||[],d=0;var v=[];r.forEach(function(e,r){if(n&&!s["!data"][f+r+i])s["!data"][f+r+i]=[];if(n)v=s["!data"][f+r+i];ir(e).forEach(function(t){if((d=u.indexOf(t))==-1)u[d=u.length]=t;var o=e[t];var c="z";var h="";var p=n?"":$a(l+d)+Wa(f+r+i);var m=n?v[l+d]:s[p];if(o&&typeof o==="object"&&!(o instanceof Date)){if(n)v[l+d]=o;else s[p]=o}else{if(typeof o=="number")c="n";else if(typeof o=="boolean")c="b";else if(typeof o=="string")c="s";else if(o instanceof Date){c="d";if(!a.UTC)o=Dr(o);if(!a.cellDates){c="n";o=dr(o)}h=m!=null&&m.z&&Le(m.z)?m.z:a.dateNF||q[14]}else if(o===null&&a.nullError){c="e";o=0}if(!m){if(!n)s[p]=m={t:c,v:o};else v[l+d]=m={t:c,v:o}}else{m.t=c;m.v=o;delete m.w;delete m.R;if(h)m.z=h}if(h)m.z=h}})});c.e.c=Math.max(c.e.c,l+u.length-1);var p=Wa(f);if(n&&!s["!data"][f])s["!data"][f]=[];if(i)for(d=0;d<u.length;++d){if(n)s["!data"][f][d+l]={t:"s",v:u[d]};else s[$a(d+l)+p]={t:"s",v:u[d]}}s["!ref"]=Ja(c);return s}function zk(e,r){return Wk(null,e,r)}function Hk(e,r,t){if(typeof r=="string"){if(e["!data"]!=null){var a=Ka(r);if(!e["!data"][a.r])e["!data"][a.r]=[];return e["!data"][a.r][a.c]||(e["!data"][a.r][a.c]={t:"z"})}return e[r]||(e[r]={t:"z"})}if(typeof r!="number")return Hk(e,Ya(r));return Hk(e,$a(t||0)+Wa(r))}function Vk(e,r){if(typeof r=="number"){if(r>=0&&e.SheetNames.length>r)return r;throw new Error("Cannot find sheet # "+r)}else if(typeof r=="string"){var t=e.SheetNames.indexOf(r);if(t>-1)return t;throw new Error("Cannot find sheet name |"+r+"|")}else throw new Error("Cannot find sheet |"+r+"|")}function $k(e,r){var t={SheetNames:[],Sheets:{}};if(e)Xk(t,e,r||"Sheet1");return t}function Xk(e,r,t,a){var n=1;if(!t)for(;n<=65535;++n,t=undefined)if(e.SheetNames.indexOf(t="Sheet"+n)==-1)break;if(!t||e.SheetNames.length>=65535)throw new Error("Too many worksheets");if(a&&e.SheetNames.indexOf(t)>=0&&t.length<32){var i=t.match(/\d+$/);n=i&&+i[0]||0;var s=i&&t.slice(0,i.index)||t;for(++n;n<=65535;++n)if(e.SheetNames.indexOf(t=s+n)==-1)break}Fm(t);if(e.SheetNames.indexOf(t)>=0)throw new Error("Worksheet with name |"+t+"| already exists!");e.SheetNames.push(t);e.Sheets[t]=r;return t}function Gk(e,r,t){if(!e.Workbook)e.Workbook={};if(!e.Workbook.Sheets)e.Workbook.Sheets=[];var a=Vk(e,r);if(!e.Workbook.Sheets[a])e.Workbook.Sheets[a]={};switch(t){case 0:;case 1:;case 2:break;default:throw new Error("Bad sheet visibility setting "+t);}e.Workbook.Sheets[a].Hidden=t}function jk(e,r){e.z=r;return e}function Kk(e,r,t){if(!r){delete e.l}else{e.l={Target:r};if(t)e.l.Tooltip=t}return e}function Yk(e,r,t){return Kk(e,"#"+r,t)}function Zk(e,r,t){if(!e.c)e.c=[];e.c.push({t:r,a:t||"SheetJS"})}function Jk(e,r,t,a){var n=typeof r!="string"?r:en(r);var i=typeof r=="string"?r:Ja(r);for(var s=n.s.r;s<=n.e.r;++s)for(var f=n.s.c;f<=n.e.c;++f){var l=Hk(e,s,f);l.t="n";l.F=i;delete l.v;if(s==n.s.r&&f==n.s.c){l.f=t;if(a)l.D=true}}var o=Za(e["!ref"]);if(o.s.r>n.s.r)o.s.r=n.s.r;if(o.s.c>n.s.c)o.s.c=n.s.c;if(o.e.r<n.e.r)o.e.r=n.e.r;if(o.e.c<n.e.c)o.e.c=n.e.c;e["!ref"]=Ja(o);return e}var qk={encode_col:$a,encode_row:Wa,encode_cell:Ya,encode_range:Ja,decode_col:Va,decode_row:Ba,split_cell:ja,decode_cell:Ka,decode_range:Za,format_cell:tn,sheet_new:nn,sheet_add_aoa:sn,sheet_add_json:Wk,sheet_add_dom:xb,aoa_to_sheet:fn,json_to_sheet:zk,table_to_sheet:Ob,table_to_book:Ib,sheet_to_csv:Mk,sheet_to_txt:Uk,sheet_to_json:Dk,sheet_to_html:Sb,sheet_to_formulae:Bk,sheet_to_row_object_array:Dk,sheet_get_cell:Hk,book_new:$k,book_append_sheet:Xk,book_set_sheet_visibility:Gk,cell_set_number_format:jk,cell_set_hyperlink:Kk,cell_set_internal_link:Yk,cell_add_comment:Zk,sheet_set_array_formula:Jk,consts:{SHEET_VISIBLE:0,SHEET_HIDDEN:1,SHEET_VERY_HIDDEN:2}};var Qk;function eA(e){Qk=e}function rA(e,r){var t=Qk();var a=r==null?{}:r;if(e==null||e["!ref"]==null){t.push(null);return t}var n=en(e["!ref"]);var i=a.FS!==undefined?a.FS:",",s=i.charCodeAt(0);var f=a.RS!==undefined?a.RS:"\n",l=f.charCodeAt(0);var o="",c=[];var h=a.skipHidden&&e["!cols"]||[];var u=a.skipHidden&&e["!rows"]||[];for(var d=n.s.c;d<=n.e.c;++d)if(!(h[d]||{}).hidden)c[d]=$a(d);var v=n.s.r;var p=false,m=0;t._read=function(){if(!p){p=true;return t.push("\ufeff")}while(v<=n.e.r){++v;if((u[v-1]||{}).hidden)continue;o=Lk(e,n,v-1,c,s,l,i,m,a);if(o!=null){if(o||a.blankrows!==false)return t.push((m++?f:"")+o)}}return t.push(null)};return t}function tA(e,r){var t=Qk();var a=r||{};var n=a.header!=null?a.header:yb;var i=a.footer!=null?a.footer:Eb;t.push(n);var s=Za(e["!ref"]);t.push(_b(e,s,a));var f=s.s.r;var l=false;t._read=function(){if(f>s.e.r){if(!l){l=true;t.push("</table>"+i)}return t.push(null)}while(f<=s.e.r){t.push(Tb(e,s,f,a));++f;break}};return t}function aA(e,r){var t=Qk({objectMode:true});if(e==null||e["!ref"]==null){t.push(null);return t}var a={t:"n",v:0},n=0,i=1,s=[],f=0,l="";var o={s:{r:0,c:0},e:{r:0,c:0}};var c=r||{};var h=c.range!=null?c.range:e["!ref"];if(c.header===1)n=1;else if(c.header==="A")n=2;else if(Array.isArray(c.header))n=3;switch(typeof h){case"string":o=en(h);break;case"number":o=en(e["!ref"]);o.s.r=h;break;default:o=h;}if(n>0)i=0;var u=Wa(o.s.r);var d=[];var v=0;var p=e["!data"]!=null;var m=o.s.r,g=0;var b={};if(p&&!e["!data"][m])e["!data"][m]=[];var w=c.skipHidden&&e["!cols"]||[];var k=c.skipHidden&&e["!rows"]||[];for(g=o.s.c;g<=o.e.c;++g){if((w[g]||{}).hidden)continue;d[g]=$a(g);a=p?e["!data"][m][g]:e[d[g]+u];switch(n){case 1:s[g]=g-o.s.c;break;case 2:s[g]=d[g];break;case 3:s[g]=c.header[g-o.s.c];break;default:if(a==null)a={w:"__EMPTY",t:"s"};l=f=tn(a,null,c);v=b[f]||0;if(!v)b[f]=1;else{do{l=f+"_"+v++}while(b[l]);b[f]=v;b[l]=1}s[g]=l;}}m=o.s.r+i;t._read=function(){while(m<=o.e.r){if((k[m-1]||{}).hidden)continue;var r=Fk(e,o,m,d,n,s,c);++m;if(r.isempty===false||(n===1?c.blankrows!==false:!!c.blankrows)){t.push(r.row);return}}return t.push(null)};return t}function nA(e,r){var t=Qk();var a=r==null?{}:r;var n=+a.stride||10;if(!e.SSF)e.SSF=Ar(q);if(e.SSF){$e();Ve(e.SSF);a.revssf=lr(e.SSF);a.revssf[e.SSF[65535]]=0;a.ssf=e.SSF;a.cellXfs=[];Tv(a.cellXfs,{},{revssf:{General:0}})}e.SheetNames.forEach(function(r){var t=e.Sheets[r];if(!t||!t["!ref"])return;var n=Za(t["!ref"]);var i=t["!data"]!=null;var s=i?t["!data"]:[];var f={r:0,c:0};for(var l=n.s.r;l<=n.e.r;++l){f.r=l;if(i&&!s[l])continue;for(var o=n.s.c;o<=n.e.c;++o){f.c=o;var c=i?s[l][o]:t[$a(o)+Wa(l)];if(!c)continue;if(c.t=="d"&&c.z==null){c=Ar(c);c.z=q[14]}void Tv(a.cellXfs,c,a)}}});var i=xg(e,a);var s=0,f=0,l=e.Sheets[e.SheetNames[f]],o=en(l),c=-1,h=false;var u=[],d=0,v=false,p=[],m={r:0,c:0};t._read=function(){switch(s){case 0:{s=1;t.push(at);t.push("<Workbook"+Ut({xmlns:Gt.ss,"xmlns:o":Gt.o,"xmlns:x":Gt.x,"xmlns:ss":Gt.ss,"xmlns:dt":Gt.dt,"xmlns:html":Gt.html})+">")}break;case 1:{s=2;t.push(_g(e,a));t.push(Sg(e,a))}break;case 2:{s=3;t.push(i);t.push(Ig(e,a))}break;case 3:{h=false;if(f>=e.SheetNames.length){s=-1;t.push("");break}t.push("<Worksheet"+Ut({"ss:Name":bt(e.SheetNames[f])})+">");l=e.Sheets[e.SheetNames[f]];if(!l){t.push("</Worksheet>");return void++f}var r=Rg(l,a,f,e);if(r.length)t.push("<Names>"+r+"</Names>");if(!l["!ref"])return s=5;o=en(l["!ref"]);c=o.s.r;s=4}break;case 4:{if(c<0||c>o.e.r){if(h)t.push("</Table>");return void(s=5)}if(c<=o.s.r){if(l["!cols"])l["!cols"].forEach(function(e,r){oc(e);var a=!!e.width;var n=kv(r,e);var i={"ss:Index":r+1};if(a)i["ss:Width"]=nc(n.width);if(e.hidden)i["ss:Hidden"]="1";if(!h){h=true;t.push("<Table>")}t.push(Bt("Column",null,i))});v=l["!data"]!=null;if(v)p=l["!data"];m.r=m.c=0}for(var g=0;c<=o.e.r&&g<n;++c,++g){var b=[Pg(c,(l["!rows"]||[])[c])];m.r=c;if(!(v&&!p[c]))for(var w=o.s.c;w<=o.e.c;++w){m.c=w;var k=false;for(d=0;d!=u.length;++d){if(u[d].s.c>w)continue;if(u[d].s.r>c)continue;if(u[d].e.c<w)continue;if(u[d].e.r<c)continue;if(u[d].s.c!=w||u[d].s.r!=c)k=true;break}if(k)continue;var A=$a(w)+Wa(c),T=v?p[c][w]:l[A];b.push(Dg(T,A,l,a,f,e,m))}b.push("</Row>");if(!h){h=true;t.push("<Table>")}t.push(b.join(""))}}break;case 5:{t.push(Ng(l,a,f,e));if(l&&l["!autofilter"])t.push('<AutoFilter x:Range="'+nu(qa(l["!autofilter"].ref),{r:0,c:0})+'" xmlns="urn:schemas-microsoft-com:office:excel"></AutoFilter>');t.push("</Worksheet>");f++;c=-1;return void(s=3)};case-1:{s=-2;t.push("</Workbook>")}break;case-2:t.push(null);break;}};return t}var iA={to_json:aA,to_html:tA,to_csv:rA,to_xlml:nA,set_readable:eA};if(typeof Kg!=="undefined")e.parse_xlscfb=Kg;e.parse_zip=nk;e.read=mk;e.readFile=gk;e.readFileSync=gk;e.write=xk;e.writeFile=Ik;e.writeFileSync=Ik;e.writeFileAsync=Nk;e.utils=qk;e.writeXLSX=Sk;e.writeFileXLSX=Rk;e.set_fs=rr;e.set_cptable=g;e.SSF=Xe;if(typeof iA!=="undefined")e.stream=iA;if(typeof Qe!=="undefined")e.CFB=Qe;if(typeof require!=="undefined"){var sA=undefined;if((sA||{}).Readable)eA(sA.Readable);try{er=undefined}catch(au){}}}if(typeof exports!=="undefined")make_xlsx_lib(exports);else if(typeof module!=="undefined"&&module.exports)make_xlsx_lib(module.exports);else if(typeof define==="function"&&define.amd)define("xlsx",function(){if(!XLSX.version)make_xlsx_lib(XLSX);return XLSX});else make_xlsx_lib(XLSX);if(typeof window!=="undefined"&&!window.XLSX)try{window.XLSX=XLSX}catch(e){}
 </script>
 
-<script data-site-core defer src="assets.js?v=15.19"></script>
-<script data-site-core defer src="workspace-ui.js?v=15.19"></script>
-<script data-site-core defer src="app.js?v=15.19"></script>
-<script data-site-core defer src="sap-prices.js?v=15.19"></script>
-<script data-site-core defer src="case-data.js?v=15.19"></script>
-<script data-site-core defer src="import-io.js?v=15.19"></script>
-<script data-site-core defer src="quote-pdf.js?v=15.19"></script>
-<script data-site-core defer src="vendor-docs.js?v=15.19"></script>
-<script data-site-core defer src="case-ui.js?v=15.19"></script>
+<script data-site-core defer src="assets.js?v=15.21"></script>
+<script data-site-core defer src="workspace-ui.js?v=15.21"></script>
+<script data-site-core defer src="app.js?v=15.21"></script>
+<script data-site-core defer src="sap-prices.js?v=15.21"></script>
+<script data-site-core defer src="case-data.js?v=15.21"></script>
+<script data-site-core defer src="import-io.js?v=15.21"></script>
+<script data-site-core defer src="quote-pdf.js?v=15.21"></script>
+<script data-site-core defer src="vendor-docs.js?v=15.21"></script>
+<script data-site-core defer src="case-ui.js?v=15.21"></script>
 </body>
 </html>

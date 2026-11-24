@@ -566,7 +566,7 @@ const Cases = (() => {
     let remaining=devices.reduce((qty,d)=>qty+(sapPrinterItems.has(d.item)?2*d.qty:0),0);
     const newPaper=(qty, insertAfter=null)=>{
       const row=Array(sapHeaders.length).fill(null);
-      Object.assign(row,{1:pos.shopId,2:pos.quote,7:pos.merchant,13:paperItem,15:qty});
+      Object.assign(row,{1:pos.shopId,2:pos.quote,7:pos.merchant,13:paperItem,15:qty,22:requestNo(pos.request)||null});
       fillSapOrderDates(row,pos);
       const entry={row};
       if(insertAfter) entries.splice(entries.indexOf(insertAfter)+1,0,entry);
@@ -680,6 +680,7 @@ const Cases = (() => {
         for (const r of old) if (!blockedHistory.has(r)) { rows.push(fillSapOrderDates(r.slice())); blockedHistory.add(r); }
         continue;
       }
+      const posPr=requestNo(p.request);
       const {matches, sales} = salesCandidates(state, order);
       const sale = order.sale.no ? order.sale : sales.length === 1 ? sales[0] : {};
       if (sales.length > 1 && !order.sale.no) report('有多張銷售發票候選，請確認後填入');
@@ -692,6 +693,16 @@ const Cases = (() => {
         .map(d=>({...d,item:standardItem(clean(d.raw||d.item).normalize('NFKC'))}));
       if (!devices.length) report('缺少有效的設備明細');
       const byVendor = Object.fromEntries(vendors.map(v => [v, invoiceLinks(state, order, v)]));
+      const huamaoEntries=byVendor['華茂'];
+      const draftVouchers=new Map();
+      for(const {inv,link} of huamaoEntries){
+        if(link.confirmed||typeof VendorDocs==='undefined')continue;
+        const slots=linkSlots(order,huamaoEntries,link,'華茂');
+        for(const slot of VendorDocs.huamaoVoucherSlots(order,inv,slots)){
+          if(!draftVouchers.has(slot))draftVouchers.set(slot,[]);
+          draftVouchers.get(slot).push(inv);
+        }
+      }
       const count = d => devices.filter(other => other.item === d.item && other.qty === d.qty).length;
       const oldPaper=old.filter(row=>standardItem(row[13])===paperItem);
       const newPaper=devices.filter(d=>d.item===paperItem);
@@ -721,6 +732,14 @@ const Cases = (() => {
           if (!populated(row[i]) && populated(value)) row[i] = value;
         };
         fill(1, p.shopId); fill(2, p.quote); fill(7, p.merchant); fill(13, d.item); fill(15, d.qty);
+        const oldPr=requestNo(row[22]);
+        if(posPr){
+          if(oldPr&&normalizeRequestNo(oldPr)!==normalizeRequestNo(posPr)){
+            report('VK 原請款單號與設備請款單號不同，已採用 POS 單號，原請款日期待核對');
+            row[26]=null;
+          }
+          row[22]=posPr;
+        }
         fillSapOrderDates(row,p);
         const partnerPrice=vendor==='拍檔'?sapPrice(d.item):null;
         if (vendor === '拍檔') {
@@ -737,6 +756,17 @@ const Cases = (() => {
         const entries = byVendor[vendor] || [];
         const entry = entries.find(e => isReady(billStatus(order, e.inv, e.link, entries)) &&
           linkSlots(order, entries, e.link, vendor).includes(d.slot));
+        const drafts=draftVouchers.get(d.slot)||[];
+        if(!entry&&drafts.length===1&&entries.filter(({link})=>linkSlots(order,entries,link,vendor).includes(d.slot)).length===1){
+          const [inv]=drafts;
+          if((populated(row[24])&&clean(row[24])!==inv.no)||
+              (populated(row[25])&&sapOrderDate(row[25])!==inv.date)){
+            report('既有採購憑證或日期與補件不同，已保留原值');
+          }else{
+            fill(24,inv.no); fill(25,inv.date);
+            report('華茂發票 '+inv.no+' 已帶入憑證與日期，請款金額仍待核對');
+          }
+        }
         if (entry) {
           const {inv, link} = entry, split = allocation(inv, link);
           const slots = linkSlots(order, entries, link, vendor);
@@ -745,11 +775,12 @@ const Cases = (() => {
           const mismatched = populated(row[24]) && clean(row[24]) !== inv.no;
           if (mismatched) report('既有採購憑證與補件不同，已保留原值');
           else {
-            const consistentPr = !populated(row[22]) || !link.pr || clean(row[22]) === clean(link.pr);
-            if (!consistentPr) report('既有請款單號與回填不同，已保留原值');
+            const consistentPr = !requestNo(row[22]) || !link.pr ||
+              normalizeRequestNo(row[22])===normalizeRequestNo(link.pr);
+            if (!consistentPr) report(posPr?'POS 設備請款單號與回填不同，未帶入回填日期':'既有請款單號與回填不同，已保留原值');
             fill(24, inv.no); fill(25, inv.date);
             if (consistentPr) { fill(22, link.pr); fill(26, link.requestDate); }
-            if (!totaled.has(inv.key) && !existingAmount && consistentPr && !populated(row[17])) {
+            if (!totaled.has(inv.key) && !existingAmount && (consistentPr||posPr&&!oldPr) && !populated(row[17])) {
               fill(17, split.gross);
               totaled.add(inv.key);
             }
@@ -803,7 +834,7 @@ const Cases = (() => {
       const gross=amounts.reduce((sum,amount)=>sum+amount,0);
       if(amounts.includes(null)||gross<=0||gross>cents(100000))continue;
       const freight=Array(sapHeaders.length).fill(null);
-      Object.assign(freight,{1:pos.shopId||null,2:pos.quote,4:'運費',7:pos.merchant||null,13:'運費',14:150,15:1,16:143});
+      Object.assign(freight,{1:pos.shopId||null,2:pos.quote,4:'運費',7:pos.merchant||null,13:'運費',14:150,15:1,16:143,22:requestNo(pos.request)||null});
       freightAfter.set(lines.at(-1),fillSapOrderDates(freight,pos));
     }
     if (!rows.length && !notes.length) throw Error('勾選的案件沒有可輸出的設備資料。');

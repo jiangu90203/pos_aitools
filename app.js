@@ -304,8 +304,8 @@ function standardItem(raw){let s=clean(raw).replace(/[\u200B-\u200D\uFEFF]/g,'')
   if(/T82III.*隔板|EPSON.*T82III.*隔板/i.test(s)) return 'EPSON T82III 隔板';
   if(/M303|WIFI發票機|WiFi發票機|wifi發票機|Wi\-?Fi發票機/i.test(s)) return 'WIFI發票機(M303)';
   if(/^發票機$|^一般發票機$|T82|T823|EPSON發票機/i.test(s)) return 'EPSON發票機';
-  if(/掃碼/.test(s)) return '掃碼槍';
-  if(/錢箱/.test(s)) return '錢箱';
+  if(/掃碼|HPRTN-?130(?![A-Z0-9])/i.test(s)) return '掃碼槍';
+  if(/錢[箱櫃]|HS-?410A(?![A-Z0-9])/i.test(s)) return '錢箱';
   if(/發票紙/.test(s)) return '發票紙捲';
   return s;
 }
@@ -847,7 +847,7 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.19#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.21#${name}"></use></svg>`;
 }
 // Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {
