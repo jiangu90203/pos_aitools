@@ -656,21 +656,21 @@ const VendorDocs = (() => {
       return {doc,caseId,matches,type,reason:reason?summary+'｜'+reason:'',pair};
     });
   }
-  function huamaoVoucherSlots(order, inv, slots) {
-    if(inv.links.length!==1||inv.everShared||!slots.length)return [];
+  function huamaoVoucherCoverage(order, inv, slots) {
+    if(inv.links.length!==1||inv.everShared||!slots.length)return null;
     const refs=documents(order).filter(ref=>ref.vendor==='華茂'&&
       !ref.parsed.identityIssues?.length&&!ref.parsed.warnings.length&&
       (ref.pair?.issues||[]).every(issue=>issue===connectorDifference));
     const bills=refs.filter(ref=>ref.kind==='發票'&&ref.parsed.invoiceReady&&ref.parsed.invoiceNo===inv.no&&
       ref.parsed.invoiceDate===inv.date&&['net','tax','gross'].every(field=>ref.parsed[field]===inv[field]));
-    if(bills.length!==1)return [];
+    if(bills.length!==1)return null;
     const bill=bills[0].parsed;
     const slips=refs.filter(ref=>ref.kind==='銷貨單'&&primaryKey(ref.parsed)===primaryKey(bill));
-    if(slips.length!==1)return [];
+    if(slips.length!==1)return null;
     const slip=slips[0].parsed;
     const diff=differences(slip,bill);
-    if(diff.hard.length||diff.notes.some(issue=>issue!==connectorDifference))return [];
-    if(!['net','tax','gross'].every(field=>slip[field]===bill[field]))return [];
+    if(diff.hard.length||diff.notes.some(issue=>issue!==connectorDifference))return null;
+    if(!['net','tax','gross'].every(field=>slip[field]===bill[field]))return null;
     const amounts=doc=>{
       const grouped=new Map();
       for(const item of doc.items){
@@ -685,13 +685,15 @@ const VendorDocs = (() => {
     };
     const billed=amounts(bill), shipped=amounts(slip);
     if(!billed||!shipped||billed.size!==shipped.size||
-        [...billed].some(([type,data])=>data.qty!==shipped.get(type)?.qty||data.net!==shipped.get(type)?.net))return [];
+        [...billed].some(([type,data])=>data.qty!==shipped.get(type)?.qty||data.net!==shipped.get(type)?.net))return null;
     const loaded=order.pos.devices.filter(device=>slots.includes(device.slot));
     const quantities=aggregateVendorItems(loaded);
-    return loaded.filter(device=>{
+    const covered=loaded.filter(device=>{
       const type=standardItem(device.item);
       return billed.has(type)&&billed.get(type).qty===quantities[type];
     }).map(device=>device.slot);
+    const complete=[...billed].every(([type,data])=>data.qty===quantities[type]);
+    return {slots:covered,complete};
   }
   function saveDecision(state,order,decision,archiveKey='') {
     if(decision.type!=='ready'||decision.caseId!==order.id)throw Error('此文件沒有可確認的案件關聯。');
@@ -739,5 +741,5 @@ const VendorDocs = (() => {
     return key;
   }
   const original = key => originals.get(key);
-  return {kinds,read,readRecords,association,save,documents,pageLabel,invoiceFields,planBatch,saveDecision,refreshInvoice,huamaoVoucherSlots,archive,original};
+  return {kinds,read,readRecords,association,save,documents,pageLabel,invoiceFields,planBatch,saveDecision,refreshInvoice,huamaoVoucherCoverage,archive,original};
 })();

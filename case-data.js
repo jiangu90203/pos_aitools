@@ -666,6 +666,8 @@ const Cases = (() => {
       if (!caseIndex.has(k)) caseIndex.set(k, []);
       caseIndex.get(k).push(c);
     }
+    const hasHistoricalTotal=(inv,vendor)=>historical.some(row=>clean(row[24])===inv.no&&populated(row[17])&&
+      (!clean(row[21])||clean(row[21]).includes(vendor)));
     const blockedHistory = new Set();
     const freightCandidates=new Map();
     for (const order of orders) {
@@ -694,13 +696,17 @@ const Cases = (() => {
       if (!devices.length) report('缺少有效的設備明細');
       const byVendor = Object.fromEntries(vendors.map(v => [v, invoiceLinks(state, order, v)]));
       const huamaoEntries=byVendor['華茂'];
-      const draftVouchers=new Map();
+      const draftVouchers=new Map(), draftTotals=[];
       for(const {inv,link} of huamaoEntries){
         if(link.confirmed||typeof VendorDocs==='undefined')continue;
         const slots=linkSlots(order,huamaoEntries,link,'華茂');
-        for(const slot of VendorDocs.huamaoVoucherSlots(order,inv,slots)){
+        const coverage=VendorDocs.huamaoVoucherCoverage(order,inv,slots);
+        if(!coverage?.slots.length)continue;
+        const draft={inv,...coverage,rows:[]};
+        draftTotals.push(draft);
+        for(const slot of draft.slots){
           if(!draftVouchers.has(slot))draftVouchers.set(slot,[]);
-          draftVouchers.get(slot).push(inv);
+          draftVouchers.get(slot).push(draft);
         }
       }
       const count = d => devices.filter(other => other.item === d.item && other.qty === d.qty).length;
@@ -758,20 +764,19 @@ const Cases = (() => {
           linkSlots(order, entries, e.link, vendor).includes(d.slot));
         const drafts=draftVouchers.get(d.slot)||[];
         if(!entry&&drafts.length===1&&entries.filter(({link})=>linkSlots(order,entries,link,vendor).includes(d.slot)).length===1){
-          const [inv]=drafts;
+          const [draft]=drafts, {inv}=draft;
           if((populated(row[24])&&clean(row[24])!==inv.no)||
               (populated(row[25])&&sapOrderDate(row[25])!==inv.date)){
             report('既有採購憑證或日期與補件不同，已保留原值');
           }else{
             fill(24,inv.no); fill(25,inv.date);
-            report('華茂發票 '+inv.no+' 已帶入憑證與日期，請款金額仍待核對');
+            draft.rows.push(row);
           }
         }
         if (entry) {
           const {inv, link} = entry, split = allocation(inv, link);
           const slots = linkSlots(order, entries, link, vendor);
-          const historicalTotals = historical.filter(r => clean(r[24]) === inv.no && populated(r[17]));
-          const existingAmount = historicalTotals.some(r => (clean(r[21]) === '' || clean(r[21]).includes(vendor)));
+          const existingAmount = hasHistoricalTotal(inv,vendor);
           const mismatched = populated(row[24]) && clean(row[24]) !== inv.no;
           if (mismatched) report('既有採購憑證與補件不同，已保留原值');
           else {
@@ -811,6 +816,22 @@ const Cases = (() => {
         if (!(item===paperItem&&knownPaperBreakdown)) report('VK 原表有未對應的設備列，已保留 ERP 歷史');
         if (item!==paperItem&&item!=='運費'&&item) fillEquipmentPrices(row,item,report);
         caseRows.push({row,historical:true});
+      }
+      for(const {inv,slots,complete,rows:matchedRows} of draftTotals){
+        const [first]=matchedRows;
+        if(!first)continue;
+        if(hasHistoricalTotal(inv,'華茂')||matchedRows.some(row=>populated(row[17])))continue;
+        let total=0;
+        let valid=complete&&matchedRows.length===slots.length;
+        for(const row of matchedRows){
+          const unit=sapNumeric(row[18]);
+          if(unit===null){valid=false;break;}
+          total+=cents(unit)*Number(row[15]);
+        }
+        if(valid&&Number.isSafeInteger(total)&&total===cents(inv.gross)){
+          first[17]=total/100;
+          report('華茂發票 '+inv.no+' 採購明細與含稅總額一致，已帶入請款總金額，仍請核對單據差異');
+        }else report('華茂發票 '+inv.no+' 的設備數量或含稅採購金額未能完全核對，請款總金額待確認');
       }
       fillSapPaper(caseRows,p,devices,report,printerConflict);
       rows.push(...caseRows.map(({row})=>row));
