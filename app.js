@@ -22,8 +22,6 @@ const HM_ITEM_LABEL = {'EPSON發票機':'T823發票機(USB)','WIFI發票機(M303
 const PARTNER_ITEM_LABEL = {'拍檔POS主機':'拍檔POS主機','拍檔POS客顯螢幕':'拍檔POS客顯螢幕'};
 const HUAMAO_ITEMS = new Set(['EPSON發票機','WIFI發票機(M303)','掃碼槍','錢箱','EPSON T82III 隔板']);
 const PARTNER_ITEMS = new Set(['拍檔POS主機','拍檔POS客顯螢幕']);
-const DIRECT_VENDOR_ITEMS = new Set([...HUAMAO_ITEMS,...PARTNER_ITEMS]);
-const CORE_ITEMS = new Set(['EPSON發票機','WIFI發票機(M303)','掃碼槍','錢箱','EPSON T82III 隔板']);
 let logLines=[], logFrame=0, fullLog=false;
 const activityLines=[];
 const activityLabels={info:'資訊',success:'完成',warning:'待確認',error:'錯誤'};
@@ -293,7 +291,9 @@ function chooseInvoiceSheet(wb, supplement=false){
   }
   return {...best,...parsed};
 }
-function standardItem(raw){let s=clean(raw).replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/^華茂出貨/,'').replace(/\s/g,'').replace(/台$/,'');
+function itemLookupKey(raw){return norm(raw).replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/^華茂出貨/,'').replace(/台$/,'');}
+function standardItem(raw){return OrderSettings.match(raw);}
+function standardBuiltinItem(raw){const s=clean(raw).replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/^華茂出貨/,'').replace(/\s/g,'').replace(/台$/,'');
   // v13.6：補齊 POS 設備即時庫存常見名稱對應
   // POS「發票機」= 廠商下單 T823發票機(USB)
   // POS「WIFI發票機」= 廠商下單 M303發票機(WIFI)
@@ -449,7 +449,7 @@ function parseInvoiceRows(rows){const parsed=[];let fail=[];for(const row of row
   itemText=itemText.replace(/台至.*/,'');
   const parts=itemText.split('+');
   let items=[]; let printerQty=0;
-  for(let p of parts){p=clean(p).replace(/台$/,''); const m=p.match(/(.+?)\*(\d+)/); if(!m) continue; const item=standardItem(m[1]); const qty=parseInt(m[2],10)||0; if(CORE_ITEMS.has(item)){items.push({item,qty}); if(item==='EPSON發票機'||item==='WIFI發票機(M303)') printerQty+=qty;}}
+  for(let p of parts){p=clean(p).replace(/台$/,''); const m=p.match(/(.+?)\*(\d+)/); if(!m) continue; const item=standardItem(m[1]); const qty=parseInt(m[2],10)||0; if(vendorForItem(item)==='華茂'){items.push({item,qty}); if(item==='EPSON發票機'||item==='WIFI發票機(M303)') printerQty+=qty;}}
   if(printerQty>0) items.push({item:'發票紙捲',qty:printerQty*2, fallback:true});
   if(items.length===0){fail.push(memo); continue;}
   parsed.push({row,merchant,memo,items,printerQty});
@@ -457,14 +457,20 @@ function parseInvoiceRows(rows){const parsed=[];let fail=[];for(const row of row
 return {parsed,fail};}
 function salesPriceForItem(item){
   const key=standardItem(item);
-  if(key==='P8802') return [6405,6100];
-  return SALES[key]||['',''];
+  const price=OrderSettings.item(key)?.saleNet;
+  if(price!=null)return [configuredGross(price),price];
+  return Object.hasOwn(SALES,key)?SALES[key]:['',''];
+}
+function purchasePriceForItem(item){
+  const key=standardItem(item), price=OrderSettings.item(key)?.purchaseNet;
+  if(price!=null)return [configuredGross(price),price];
+  return Object.hasOwn(COST,key)?COST[key]:undefined;
 }
 function makeStats(output){const map={}; for(const r of output){const key=r['商家名稱']+'|'+r['設備']; if(!map[key]) map[key]={'商家名稱':r['商家名稱'],'設備':r['設備'],'數量':0}; map[key]['數量'] += Number(r['數量'])||0;} return Object.values(map);}
 function aggregateVendorItems(devices){
-  const agg={};
+  const agg=Object.create(null);
   for(const d of (devices||[])){
-    if(!HUAMAO_ITEMS.has(d.item)) continue;
+    if(vendorForItem(d.item)!=='華茂') continue;
     const qty=Number(d.qty)||0;
     if(qty<=0) continue;
     agg[d.item]=(agg[d.item]||0)+qty;
@@ -472,7 +478,7 @@ function aggregateVendorItems(devices){
   return agg;
 }
 function hmDescription(agg, merchant){
-  const order=['EPSON發票機','WIFI發票機(M303)','掃碼槍','錢箱','EPSON T82III 隔板'];
+  const order=new Set([...HUAMAO_ITEMS,...Object.keys(agg)]);
   const parts=[];
   for(const item of order){
     if(agg[item]>0) parts.push(`${HM_ITEM_LABEL[item]||item}*${agg[item]}`);
@@ -482,7 +488,7 @@ function hmDescription(agg, merchant){
 }
 function hmAmount(agg){
   let total=0;
-  for(const [item,qty] of Object.entries(agg)) total += ((COST[item]||[0,0])[0]||0) * qty;
+  for(const [item,qty] of Object.entries(agg)) total += (purchasePriceForItem(item)?.[0]??0) * qty;
   return total;
 }
 function formatToday(){
@@ -521,7 +527,7 @@ async function generateHuamao(){
       const devices=parsePosDevices(row);
       const agg=aggregateVendorItems(devices);
       const desc=hmDescription(agg, merchant);
-      const unknownCost=Object.keys(agg).filter(item=>!Object.hasOwn(COST,item));
+      const unknownCost=Object.keys(agg).filter(item=>!purchasePriceForItem(item));
       const amount=unknownCost.length?'':hmAmount(agg);
       const sales=matchSalesRecord(merchant, salesRecords, amount, usedSales,true);
       const invoiceNo=sales?.發票號碼 || '';
@@ -581,7 +587,7 @@ function orderedPosItems(devices,invoiceItems=[]){
   return out;
 }
 async function convert(){resetLog('開始生成請款單轉換結果...');document.getElementById('status').innerHTML='';const invF=document.getElementById('invoiceFile').files[0];const posF=document.getElementById('posFile').files[0];if(!invF||!posF){reportOperationError('請先上傳兩個檔案');return;}const sText=clean(document.getElementById('invoiceStartRow')?.value);const eText=clean(document.getElementById('invoiceEndRow')?.value);if(eText&&!sText)throw new Error('請同時填寫開始列，或將兩欄留空。');const startRow=sText?positiveRow(sText):0;const endRow=eText?positiveRow(eText):(startRow||0);if(startRow&&endRow<startRow){reportOperationError('結束列不可小於開始列');return;}
-try{const [inv,recordsFromPos]=await Promise.all([readLegacyImport(invF,'legacyInvoice'),readLegacyImport(posF,'legacyIndex')]);const invoiceIndex=buildInvoiceRequestIndex(inv.rows);const pos={records:recordsFromPos};let records;if(startRow){records=pos.records.filter(r=>r.rowNum>=startRow&&r.rowNum<=endRow);log(`依 POS 列數處理：${startRow}～${endRow}`);}else{records=pos.records.filter(r=>normalizeRequestNo(r.requestNo)&&invoiceIndex.has(normalizeRequestNo(r.requestNo)));log('未指定列數：依請款單號精準對應 POS 列');}if(!records.length)throw new Error('沒有符合條件的 POS 資料；請確認列數、工作表及請款單號。');const seenRequests=new Set();for(const rec of records){const key=normalizeRequestNo(rec.requestNo);if(key&&invoiceIndex.has(key)){if(seenRequests.has(key))throw new Error(`POS 區間內請款單號 ${key} 對應多列，請確認總金額分配後分批處理，避免重複請款總金額。`);seenRequests.add(key);}}const output=[];let noInvoice=0,skipped=0;for(const rec of records){const entry=invoiceIndex.get(normalizeRequestNo(rec.requestNo))||null;if(!entry)noInvoice++;const items=orderedPosItems(rec.devices,entry?.items||[]);if(!items.length){skipped++;log(`第 ${rec.rowNum} 列沒有設備，已略過`);continue;}log(`POS 第 ${rec.rowNum} 列設備：${items.map(it=>`${it.item}*${it.qty}`).join('、')}`);const row=entry?.row||{};const invoiceNo=entry?.requestNo||rec.requestNo||'';const voucher=entry?clean(findVal(row,['憑證文件號碼','發票號碼'])):'';const voucherDate=entry?excelDateToText(findVal(row,['憑證日期','發票日期'])):'';const requestDate=entry?clean(findVal(row,['建檔日期','請款日期','繳款日期'])):'';const total=entry?clean(findVal(row,['金額','請款金額','含稅金額'])):'';let first=true;for(const it of items){const sale=salesPriceForItem(it.item);const cost=COST[standardItem(it.item)]||['',''];const vendor=vendorForItem(it.item);const isHuamao=vendor==='華茂';const isPartner=vendor==='拍檔';output.push({'SHOP ID':rec.shopId,'報價單編號':rec.quote,'峰潮下單日期':(isHuamao||isPartner)?'':rec.fcDate,'華茂下單日期':isHuamao?rec.hmDate:'','出貨廠商':isHuamao?'VAA0000037':'','出貨廠商ID':isHuamao?'華茂資訊':(isPartner?'拍檔':''),'商家名稱':rec.merchant,'設備':it.item,'銷售價(含稅)':sale[0],'試算未稅':sale[1],'數量':it.qty,'請款總金額':first?total:'','採購價(含稅)':cost[0],'採購價(未稅)':cost[1],'請款單號':invoiceNo,'發票號碼':voucher,'發票日期':voucherDate,'請款日期':requestDate,'備註':entry?entry.memo:`POS 第 ${rec.rowNum} 列｜無請款單資料`});first=false;}}
+try{const [inv,recordsFromPos]=await Promise.all([readLegacyImport(invF,'legacyInvoice'),readLegacyImport(posF,'legacyIndex')]);const invoiceIndex=buildInvoiceRequestIndex(inv.rows);const pos={records:recordsFromPos};let records;if(startRow){records=pos.records.filter(r=>r.rowNum>=startRow&&r.rowNum<=endRow);log(`依 POS 列數處理：${startRow}～${endRow}`);}else{records=pos.records.filter(r=>normalizeRequestNo(r.requestNo)&&invoiceIndex.has(normalizeRequestNo(r.requestNo)));log('未指定列數：依請款單號精準對應 POS 列');}if(!records.length)throw new Error('沒有符合條件的 POS 資料；請確認列數、工作表及請款單號。');const seenRequests=new Set();for(const rec of records){const key=normalizeRequestNo(rec.requestNo);if(key&&invoiceIndex.has(key)){if(seenRequests.has(key))throw new Error(`POS 區間內請款單號 ${key} 對應多列，請確認總金額分配後分批處理，避免重複請款總金額。`);seenRequests.add(key);}}const output=[];let noInvoice=0,skipped=0;for(const rec of records){const entry=invoiceIndex.get(normalizeRequestNo(rec.requestNo))||null;if(!entry)noInvoice++;const items=orderedPosItems(rec.devices,entry?.items||[]);if(!items.length){skipped++;log(`第 ${rec.rowNum} 列沒有設備，已略過`);continue;}log(`POS 第 ${rec.rowNum} 列設備：${items.map(it=>`${it.item}*${it.qty}`).join('、')}`);const row=entry?.row||{};const invoiceNo=entry?.requestNo||rec.requestNo||'';const voucher=entry?clean(findVal(row,['憑證文件號碼','發票號碼'])):'';const voucherDate=entry?excelDateToText(findVal(row,['憑證日期','發票日期'])):'';const requestDate=entry?clean(findVal(row,['建檔日期','請款日期','繳款日期'])):'';const total=entry?clean(findVal(row,['金額','請款金額','含稅金額'])):'';let first=true;for(const it of items){const sale=salesPriceForItem(it.item);const cost=purchasePriceForItem(it.item)||['',''];const vendor=vendorForItem(it.item);const isHuamao=vendor==='華茂';const isPartner=vendor==='拍檔';const supplier=OrderSettings.vendor(vendor);output.push({'SHOP ID':rec.shopId,'報價單編號':rec.quote,'峰潮下單日期':(isHuamao||isPartner)?'':rec.fcDate,'華茂下單日期':isHuamao?rec.hmDate:'','出貨廠商':isPartner?'':supplier.code,'出貨廠商ID':isPartner?'拍檔':(supplier.sapName||vendor),'商家名稱':rec.merchant,'設備':it.item,'銷售價(含稅)':sale[0],'試算未稅':sale[1],'數量':it.qty,'請款總金額':first?total:'','採購價(含稅)':cost[0],'採購價(未稅)':cost[1],'請款單號':invoiceNo,'發票號碼':voucher,'發票日期':voucherDate,'請款日期':requestDate,'備註':entry?entry.memo:`POS 第 ${rec.rowNum} 列｜無請款單資料`});first=false;}}
 if(!output.length)throw new Error('沒有可匯出的設備，請確認設備欄位及數量。');const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(output,{header:OUT_HEADERS}),'轉換結果');XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(makeStats(output)),'數量統計');XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(logLines.map(x=>[x])),'處理紀錄');XLSX.writeFile(wb,`請款單轉換結果_${formatToday()}.xlsx`);document.getElementById('status').innerHTML=`<div class="ok">轉換完成：掃描 ${records.length} 個 POS 列、輸出 ${output.length} 筆設備資料；其中 ${noInvoice} 列沒有請款單資料，仍已正常匯出。</div>`;}catch(err){console.error(err);reportOperationError(err.message||String(err));document.getElementById('status').innerHTML='<div class="warn">'+escapeHtml(err.message||err)+'</div>';}}
 
 function normalizeInvoiceNo(v){return clean(v).toUpperCase().replace(/[^A-Z0-9]/g,'');}
@@ -768,17 +774,24 @@ async function compareHuamaoAr(){
 
 function vendorForItem(item){
   const v=standardItem(item);
+  const configured=OrderSettings.item(v);
+  if(configured) return configured.vendor;
   if(HUAMAO_ITEMS.has(v)) return '華茂';
   if(PARTNER_ITEMS.has(v)) return '拍檔';
   return '';
 }
 function vendorItemName(item){
+  const label=OrderSettings.item(item)?.label;
+  if(label)return label;
   const vendor=vendorForItem(item);
   if(vendor==='華茂') return HM_ITEM_LABEL[item] || item;
   if(vendor==='拍檔') return PARTNER_ITEM_LABEL[item] || item;
   return item;
 }
 function vendorItemUnit(item){
+  return OrderSettings.item(item)?.unit || defaultOrderUnit(item);
+}
+function defaultOrderUnit(item){
   if(item==='掃碼槍') return '支';
   if(item==='錢箱') return '個';
   if(item==='EPSON T82III 隔板') return '個';
@@ -791,14 +804,15 @@ function vendorLineItem(item, qty){
   return `${vendorItemName(item)}* ${qty}`;
 }
 function getVendorDevices(row){
-  const devices=parsePosDevices(row).filter(d=>DIRECT_VENDOR_ITEMS.has(d.item) && (Number(d.qty)||0)>0);
-  const agg={};
+  const devices=parsePosDevices(row).filter(d=>vendorForItem(d.item) && (Number(d.qty)||0)>0);
+  const groups=new Map();
   for(const d of devices){
     const vendor=vendorForItem(d.item);
-    const key=`${vendor}|||${d.item}`;
-    agg[key]=(agg[key]||0)+(Number(d.qty)||0);
+    if(!groups.has(vendor))groups.set(vendor,new Map());
+    const items=groups.get(vendor);
+    items.set(d.item,(items.get(d.item)||0)+d.qty);
   }
-  return Object.entries(agg).map(([key,qty])=>{const [vendor,item]=key.split('|||');return {vendor,item,qty};});
+  return Array.from(groups).flatMap(([vendor,items])=>Array.from(items,([item,qty])=>({vendor,item,qty})));
 }
 function getVendorContactInfo(row){
   return {
@@ -815,48 +829,38 @@ function buildVendorMessageFromGroup(group){
   const info=group.info;
   const vendor=group.vendor;
   const devices=Object.entries(group.agg).map(([item,qty])=>({item,qty}));
-  const order=['EPSON發票機','WIFI發票機(M303)','掃碼槍','錢箱','EPSON T82III 隔板','拍檔POS主機','拍檔POS客顯螢幕'];
+  const order=[...new Set([...HUAMAO_ITEMS,...PARTNER_ITEMS,...Object.keys(group.agg)])];
   devices.sort((a,b)=>order.indexOf(a.item)-order.indexOf(b.item));
   const hasPrinter=vendor==='華茂' && devices.some(d=>d.item==='EPSON發票機' || d.item==='WIFI發票機(M303)');
   const lineItems=devices.map(d=>vendorLineItem(d.item,d.qty)).join('、');
   const bodyItems=devices.map(d=>vendorBodyItem(d.item,d.qty)).join('\n');
-  const lineMessage=`我要下單
-商品：${lineItems}
-
-【設備收件資訊】
-聯絡人：${info.contact}
-公司名稱：${info.merchant}
-電話：${info.phone}
-地址：${info.address}`;
-  const subject=`【順立智慧 x ${vendor}】 ${devices.map(d=>`${vendorItemName(d.item)}*${d.qty}`).join('+')}-${info.merchant}`;
   const settingNote=hasPrinter ? `\n\n發票機設定在請協助：該設定的問題設定好，再出貨給商家` : '';
-  const greeting=vendor==='華茂' ? 'Hi Elita~' : 'Hi~';
-  const emailBody=`${greeting}
-
-再麻煩協助出貨：
-${bodyItems}
-
-【設備收件資訊】
-聯絡人：${info.contact}
-公司名稱：${info.merchant}
-電話：${info.phone}
-地址：${info.address}${settingNote}`;
+  const variables={供應商:vendor,公司名稱:info.merchant,聯絡人:info.contact,電話:info.phone,地址:info.address,
+    發票機備註:settingNote,筆數:1};
+  const templates=OrderSettings.vendor(vendor);
+  const lineMessage=renderOrderTemplate(templates.line,{...variables,品項:lineItems});
+  const subject=renderOrderTemplate(templates.subject,{...variables,品項:devices.map(d=>`${vendorItemName(d.item)}*${d.qty}`).join('+')})
+    .replace(/[\r\n]+/g,' ').trim();
+  const emailBody=renderOrderTemplate(templates.body,{...variables,品項:bodyItems});
   return {lineMessage, subject, emailBody, merchant:info.merchant, vendor, devices, rows:group.rows};
 }
 function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.23#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.24#${name}"></use></svg>`;
 }
-// Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {
   華茂: {to:[['','elita.lin@bestpride.com.tw']], cc:[['','sales@bestpride.com.tw'],['','support@cyberbiz.io']]},
   拍檔: {to:[['Jed Lee','jed.lee@partner.com.tw'],['Karen Chang','karen.chang@partner.com.tw']],
     cc:[['','support@cyberbiz.io'],['Hannah Kuo','hannah.kuo@cyberbiz.io']]}
 };
 function vendorRecipients(vendor) {
-  return Object.hasOwn(VENDOR_ORDER_CONTACTS,vendor)?VENDOR_ORDER_CONTACTS[vendor]:{to:[],cc:[]};
+  const defaults=Object.hasOwn(VENDOR_ORDER_CONTACTS,vendor)?VENDOR_ORDER_CONTACTS[vendor]:{to:[],cc:[]};
+  const stored=OrderSettings.vendor(vendor);
+  const directory=field=>stored[field].split(',').filter(Boolean).map(email=>
+    [defaults[field].find(([,address])=>address.toLowerCase()===email.toLowerCase())?.[0]||'',email]);
+  return {to:directory('to'),cc:directory('cc')};
 }
 function validRecipients(input) {
   if(!String(input||'').trim())return '';
@@ -866,9 +870,136 @@ function validRecipients(input) {
     throw Error('請輸入有效的廠商信箱，多個信箱以逗號分隔。');
   return [...new Set(addresses)].join(',');
 }
+
+const orderTemplateFields = ['subject','batchSubject','body','line'];
+const orderTokens = ['供應商','公司名稱','品項','聯絡人','電話','地址','發票機備註','筆數'];
+const batchOrderTokens = ['供應商','公司名稱','品項','筆數'];
+const orderTokenPattern = /\{\{\s*([^{}]+?)\s*\}\}/g;
+function renderOrderTemplate(template, values) {
+  return template.replace(orderTokenPattern, (_,key)=>Object.hasOwn(values,key)?String(values[key]??''):'');
+}
+const configuredGross = net => Math.round(Math.round(net*100)*105/100)/100;
+
+const OrderSettings = (() => {
+  const storageKey='posEquipment.orderSettings.v1';
+  const builtInItems=[...new Set([...HUAMAO_ITEMS,...PARTNER_ITEMS,...Object.keys(SALES),...Object.keys(COST),
+    'Mypay刷卡機商米','客戶顯示器','POS主機PosiflexXT-3815G2'])];
+  const builtInKeys=new Map(builtInItems.map(name=>[itemLookupKey(name),name]));
+  for(const [name,label] of Object.entries(HM_ITEM_LABEL))builtInKeys.set(itemLookupKey(label),name);
+  const builtInVendors=Object.keys(VENDOR_ORDER_CONTACTS);
+  const vendorDefaults = name => {
+    const addresses=Object.hasOwn(VENDOR_ORDER_CONTACTS,name)?VENDOR_ORDER_CONTACTS[name]:undefined;
+    const shipment='【設備收件資訊】\n聯絡人：{{聯絡人}}\n公司名稱：{{公司名稱}}\n電話：{{電話}}\n地址：{{地址}}';
+    const greeting=name==='華茂'?'Hi Elita~':'Hi~';
+    return {name,to:addresses?.to.map(([,email])=>email).join(',')||'',cc:addresses?.cc.map(([,email])=>email).join(',')||'',
+      code:name==='華茂'?'VAA0000037':name==='拍檔'?'VAA0001432':'',
+      sapName:name==='華茂'?'華茂資訊':name==='拍檔'?'拍檔科技':'',
+      subject:'【順立智慧 x {{供應商}}】 {{品項}}-{{公司名稱}}',
+      batchSubject:'【順立智慧 x {{供應商}}】設備採購 {{筆數}} 筆',
+      body:greeting+'\n\n再麻煩協助出貨：\n{{品項}}\n\n'+shipment+'{{發票機備註}}',
+      line:'我要下單\n商品：{{品項}}\n\n'+shipment};
+  };
+  const itemDefaults = name => ({name,label:HM_ITEM_LABEL[name]||PARTNER_ITEM_LABEL[name]||name,
+    unit:defaultOrderUnit(name),vendor:HUAMAO_ITEMS.has(name)?'華茂':PARTNER_ITEMS.has(name)?'拍檔':'',
+    aliases:[],saleNet:null,purchaseNet:null});
+  const blank = () => ({version:1,items:[],vendors:[]});
+  const named = (value,max,field,required=false) => {
+    if(typeof value!=='string'||value.length>max||/[\u0000-\u001f\u007f]/.test(value)||required&&!value.trim())
+      throw Error(field+'格式不符。');
+    return value.trim();
+  };
+  const identifier = (value,field) => {
+    const name=named(value,100,field,true);
+    if(['__proto__','prototype','constructor'].includes(norm(name))||/[+*]/.test(name))throw Error(field+'含有保留字元。');
+    return name;
+  };
+  function price(value) {
+    if(value===null)return null;
+    if(typeof value!=='number'||!Number.isFinite(value)||value<0||value>1e9||Math.abs(value*100-Math.round(value*100))>0.0001)
+      throw Error('單價須為 0 至 10 億元，最多兩位小數。');
+    return value;
+  }
+  function compile(raw) {
+    if(raw?.version!==1||!Array.isArray(raw.items)||!Array.isArray(raw.vendors)||raw.items.length>200||raw.vendors.length>50)
+      throw Error('自訂參數備份格式或數量不符。');
+    const vendors=new Map(), vendorKeys=new Map(builtInVendors.map(name=>[norm(name),name]));
+    for(const entry of raw.vendors){
+      const name=identifier(entry?.name,'供應商名稱'), key=norm(name);
+      if(vendors.has(name)||(vendorKeys.has(key)&&vendorKeys.get(key)!==name)||key==='其他')throw Error('供應商名稱重複或為系統保留。');
+      vendorKeys.set(key,name);
+      const vendor={name,to:validRecipients(named(entry.to,512,'收件人')),cc:validRecipients(named(entry.cc,512,'副本')),
+        code:named(entry.code,50,'出貨廠商代碼'),sapName:named(entry.sapName,100,'出貨廠商 ID')};
+      for(const field of orderTemplateFields){
+        const template=entry[field];
+        const tokens=field==='batchSubject'?batchOrderTokens:orderTokens;
+        if(typeof template!=='string'||!template.trim()||template.length>4000||
+            (field.endsWith('Subject')||field==='subject')&&/[\r\n]/.test(template))throw Error('請填寫有效的下單文案。');
+        const remainder=template.replace(orderTokenPattern,(_,token)=>{
+          if(!tokens.includes(token))throw Error('文案不能使用變數 {{'+token+'}}。');
+          return '';
+        });
+        if(/\{\{|\}\}/.test(remainder))throw Error('文案變數格式不符，請用兩個大括號包住變數名稱。');
+        vendor[field]=template;
+      }
+      vendors.set(name,vendor);
+    }
+    for(const field of ['code','sapName']){
+      const seen=new Set();
+      for(const name of vendorKeys.values()){
+        const value=norm((vendors.get(name)||vendorDefaults(name))[field]);
+        if(!value)continue;
+        if(seen.has(value))throw Error('多家供應商使用相同的 SAP 廠商識別資訊。');
+        seen.add(value);
+      }
+    }
+    const items=new Map(), lookup=new Map(builtInKeys);
+    for(const entry of raw.items){
+      const name=identifier(entry?.name,'品項名稱');
+      if(items.has(name))throw Error('品項名稱重複。');
+      if(!Array.isArray(entry.aliases)||entry.aliases.length>30)throw Error('每個品項最多設定 30 個別名。');
+      const vendor=named(entry.vendor,100,'品項供應商');
+      if(vendor&&!builtInVendors.includes(vendor)&&!vendors.has(vendor))throw Error('品項「'+name+'」指定的供應商不存在。');
+      const aliases=[...new Set(entry.aliases.map(s=>named(s,160,'品項別名',true)))];
+      for(const value of [name,...aliases]){
+        const key=itemLookupKey(value), previous=lookup.get(key);
+        if(!key)throw Error('品項名稱或別名「'+value+'」無有效字元。');
+        if(previous&&previous!==name)throw Error('品項名稱或別名「'+value+'」已屬於 '+previous+'。');
+        lookup.set(key,name);
+      }
+      items.set(name,{name,vendor,aliases,label:named(entry.label,160,'下單品名',true),unit:named(entry.unit,12,'單位',true),
+        saleNet:price(entry.saleNet),purchaseNet:price(entry.purchaseNet)});
+    }
+    const data={version:1,items:[...items.values()],vendors:[...vendors.values()]};
+    const match=raw=>lookup.get(itemLookupKey(raw))||standardBuiltinItem(raw);
+    const supplier=item=>items.get(item)?.vendor??itemDefaults(item).vendor;
+    return {data,items,vendors,match,supplier};
+  }
+  let current=compile(blank()), readError=false;
+  if(typeof window!=='undefined')try{
+    const stored=window.localStorage?.getItem(storageKey);
+    if(stored)current=compile(JSON.parse(stored));
+  }catch{readError=true;}
+  function save(raw,check) {
+    const next=compile(raw);
+    check?.(current,next);
+    try{window.localStorage.setItem(storageKey,JSON.stringify(next.data));}
+    catch{throw Error('此瀏覽器無法保存自訂參數，請檢查本機儲存設定。');}
+    current=next;
+    readError=false;
+  }
+  return {save,load:raw=>{current=compile(raw);},readError:()=>readError,snapshot:()=>current.data,
+    match:raw=>current.match(raw),item:name=>current.items.get(name),itemDefaults,
+    itemNames:()=>[...new Set([...builtInItems,...current.items.keys()])],
+    vendor:name=>current.vendors.get(name)||vendorDefaults(name),vendorDefaults,
+    vendorNames:()=>[...new Set([...builtInVendors,...current.vendors.keys()])],
+    isBuiltInItem:name=>builtInItems.includes(name),isBuiltInVendor:name=>builtInVendors.includes(name)};
+})();
+
 function vendorCommunication(vendor,messages) {
   if(!messages.length)return {subject:'',body:'',line:''};
-  const subject=messages.length===1?messages[0].subject:`【順立智慧 x ${vendor}】設備採購 ${messages.length} 筆`;
+  const subject=messages.length===1?messages[0].subject:renderOrderTemplate(OrderSettings.vendor(vendor).batchSubject,
+    {供應商:vendor,筆數:messages.length,公司名稱:[...new Set(messages.map(m=>m.merchant))].join('、'),
+      品項:messages.flatMap(m=>m.devices).map(d=>`${vendorItemName(d.item)}*${d.qty}`).join('+')}).replace(/[\r\n]+/g,' ').trim();
   const body=messages.length===1?messages[0].emailBody:messages.map(m=>[m.subject,m.emailBody].join('\n\n')).join('\n\n────────\n\n');
   return {subject,body,line:messages.map(m=>m.lineMessage).join('\n\n')};
 }
@@ -898,7 +1029,7 @@ function renderVendorGroups(results,page=0){
   if(!box) return;
   vendorResultRows=results;vendorResultPage=page;
   if(!results.length){
-    box.innerHTML='<div class="vendorEmpty">沒有產生下單訊息，請確認指定區間內是否有華茂或拍檔直出商品。</div>';
+    box.innerHTML='<div class="vendorEmpty">沒有產生下單訊息，請確認指定區間內有已設定供應商的品項。</div>';
     return;
   }
   const size=12,pager=pagerHtml('vendor',page,size,results.length);
@@ -944,22 +1075,22 @@ async function generateVendorMessages(){
     const sr=await readLegacyImport(posF,'legacyPos');
     const targetRows=sr.rows.filter(r=>Number(r.__rowNum)>=startRow && Number(r.__rowNum)<=endRow);
     if(!targetRows.length) throw new Error(`指定區間 ${startRow} ~ ${endRow} 沒有資料，請確認列數是否正確。`);
-    const groups={};
+    const groups=Object.create(null);
     const skipped=[];
     for(const row of targetRows){
       const info=getVendorContactInfo(row);
       const devices=getVendorDevices(row);
       const rowNum=row.__rowNum;
       if(!info.merchant){skipped.push(`第${rowNum}列：缺商家名稱`); continue;}
-      if(!devices.length){skipped.push(`第${rowNum}列：沒有華茂或拍檔直出商品`); continue;}
-      const byVendor={};
+      if(!devices.length){skipped.push(`第${rowNum}列：沒有設定供應商的商品`); continue;}
+      const byVendor=Object.create(null);
       for(const d of devices){
         if(!byVendor[d.vendor]) byVendor[d.vendor]=[];
         byVendor[d.vendor].push(d);
       }
       for(const [vendor,vendorDevices] of Object.entries(byVendor)){
         const key=vendorGroupKey(info,vendor);
-        if(!groups[key]) groups[key]={info, vendor, agg:{}, rows:[]};
+        if(!groups[key]) groups[key]={info, vendor, agg:Object.create(null), rows:[]};
         groups[key].rows.push(rowNum);
         for(const d of vendorDevices) groups[key].agg[d.item]=(groups[key].agg[d.item]||0)+(Number(d.qty)||0);
       }
@@ -1387,10 +1518,10 @@ function showErpView() {
   const hash=window.location.hash.slice(1);
   const direct=['hm','invoice','vendorMsg'];
   const info=['logPanel','rules','helpPanel'];
-  const pages=['caseWorkspace','legacyWorkflows','ar','systemInfo'];
+  const pages=['caseWorkspace','legacyWorkflows','ar','customSettings','systemInfo'];
   const view=direct.includes(hash)?'legacyWorkflows':info.includes(hash)?'systemInfo':pages.includes(hash)?hash:'caseWorkspace';
   const show=(id,on)=>{const node=document.getElementById(id);if(node)node.hidden=!on;};
-  for(const id of ['caseWorkspace','systemInfo'])show(id,view===id);
+  for(const id of ['caseWorkspace','customSettings','systemInfo'])show(id,view===id);
   const infoPage=info.includes(hash)?hash:'logPanel';
   for(const id of info)show(id,view==='systemInfo'&&infoPage===id);
   if(view==='systemInfo'&&infoPage==='logPanel')flushLog();

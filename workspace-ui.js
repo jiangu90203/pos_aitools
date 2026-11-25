@@ -143,7 +143,8 @@ const WorkspaceUI = (() => {
       if (hadFocus) (visible.values().next().value || notice.previousFocus)?.focus?.({preventScroll:true});
     }
     close.addEventListener('click', dismiss);
-    if (tone !== 'error') {
+    if (tone === 'error') timer = setTimeout(dismiss, 5000);
+    else {
       const resume = () => {
         pause();
         if (!card.matches(':hover') && !card.contains(document.activeElement)) timer = setTimeout(dismiss, duration);

@@ -13,6 +13,7 @@ try{
   if(XLSX.version!=='0.20.3'||typeof XLSX.read!=='function')throw Error('背景 Excel 元件無法初始化');
   self.onmessage=({data})=>{
     try{
+      if(data.orderSettings)OrderSettings.load(data.orderSettings);
       const value=ImportIO.project(data.buffer,data.name,data.mode,data.vendor);
       self.postMessage({value,notices:logLines});
     }catch(err){self.postMessage({error:err.message||String(err)});}

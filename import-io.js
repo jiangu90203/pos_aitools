@@ -55,7 +55,7 @@ const ImportIO = (() => {
       worker.onmessage=({data})=>{
         if(data.bootstrapError&&!sent){fallback(data.bootstrapError);return;}
         if(data.ready&&!sent){
-          try{worker.postMessage({buffer,name,mode,vendor},[buffer]);sent=true;}
+          try{worker.postMessage({buffer,name,mode,vendor,orderSettings:OrderSettings.snapshot()},[buffer]);sent=true;}
           catch{fallback('背景資料傳送失敗');return;}
           clearTimeout(timer);
           timer=setTimeout(()=>{

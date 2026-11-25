@@ -1,5 +1,5 @@
 /* Case workspace UI. Imported values are escaped before rendering. */
-(() => {
+const CaseWorkspace = (() => {
   const byId = id => document.getElementById(id);
   const root = byId('caseWorkspace');
   if (!root) return;
@@ -24,7 +24,7 @@
     caseIndex=new Map(state.cases.map(c=>[c.id,{
       record:c,
       search:[c.pos.quote,c.pos.shopId,c.pos.merchant].map(norm),
-      vendors:Cases.vendors.filter(v=>Cases.hasVendor(c,v))
+      vendors:OrderSettings.vendorNames().filter(v=>Cases.hasVendor(c,v))
     }]));
   }
   function indexBills() {
@@ -92,7 +92,12 @@
     if(docs.some(d=>d.parsed.warnings.length))return 'review';
     const suppliers=caseIndex.get(c.id).vendors.filter(v=>!vendor||vendor===v);
     if(!suppliers.length)return '';
-    return suppliers.every(v=>VendorDocs.kinds.every(k=>docs.some(d=>d.vendor===v&&d.kind===k)))?'complete':'missing';
+    const complete=v=>{
+      if(Cases.vendors.includes(v))return VendorDocs.kinds.every(k=>docs.some(d=>d.vendor===v&&d.kind===k));
+      const entries=(billsByCase.get(c.id)||[]).filter(x=>x.inv.vendor===v);
+      return entries.length&&entries.every(({inv,link})=>Cases.isReady(Cases.billStatus(c,inv,link,entries)));
+    };
+    return suppliers.every(complete)?'complete':'missing';
   }
   const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,0));
   const batchLabels={linked:'成功配對',unmatched:'未找到對應案件',duplicate:'文件重複',failed:'解析失敗'};
@@ -540,7 +545,7 @@
     node.hidden = !c;
     if (!c) { node.innerHTML = ''; return; }
     const p = c.pos, partner = Cases.desc(c, '拍檔'), messages = Cases.orderMessages(c);
-    const cv = Cases.vendors.filter(v => Cases.hasVendor(c, v));
+    const cv = OrderSettings.vendorNames().filter(v => Cases.hasVendor(c, v));
     const bill = cv.flatMap(v => Cases.invoiceLinks(state, c, v).map(entry => ({...entry, vendor: v})));
     const hints=new Map();
     const formVendor=cv.at(-1);
@@ -569,12 +574,12 @@
           return `<article class="case-message"><strong>${e(m.vendor)}</strong>
           ${!p.contact || !p.address || !p.phone ? '<span class="case-warning">收件人、電話或地址待補</span>' : ''}
           <div class="case-actions">
-          <button type="button" class="case-btn" data-copy="subject" data-vendor="${m.vendor}">複製 Email 主旨</button>
-          <button type="button" class="case-btn" data-copy="emailBody" data-vendor="${m.vendor}">複製 Email 內文</button>
-          <button type="button" class="case-btn" data-copy="lineMessage" data-vendor="${m.vendor}">複製 LINE 文字</button></div>
+          <button type="button" class="case-btn" data-copy="subject" data-vendor="${e(m.vendor)}">複製 Email 主旨</button>
+          <button type="button" class="case-btn" data-copy="emailBody" data-vendor="${e(m.vendor)}">複製 Email 內文</button>
+          <button type="button" class="case-btn" data-copy="lineMessage" data-vendor="${e(m.vendor)}">複製 LINE 文字</button></div>
           <details><summary>預覽 Email 與 LINE 內容</summary><pre>${e(m.subject + '\n\n' + m.emailBody + '\n\n' + m.lineMessage)}</pre></details>
-          <label class="case-tick"><input type="checkbox" data-order="email" data-vendor="${m.vendor}" ${s.email ? 'checked' : ''}>Email 已寄出</label>
-          <label class="case-tick"><input type="checkbox" data-order="line" data-vendor="${m.vendor}" ${s.line ? 'checked' : ''} ${!s.email ? 'disabled' : ''}>LINE 已通知</label></article>`;
+          <label class="case-tick"><input type="checkbox" data-order="email" data-vendor="${e(m.vendor)}" ${s.email ? 'checked' : ''}>Email 已寄出</label>
+          <label class="case-tick"><input type="checkbox" data-order="line" data-vendor="${e(m.vendor)}" ${s.line ? 'checked' : ''} ${!s.email ? 'disabled' : ''}>LINE 已通知</label></article>`;
         }).join('')}</section>` : ''}
       ${vendorSection(c)}
       <div class="case-phase">
@@ -591,7 +596,7 @@
       <div class="case-actions">
       <button class="case-btn primary">儲存發票</button>
       <label class="case-tick"><input type="checkbox" name="replace">更新同號發票資料</label></div>
-      </form>` : '<p>此案件沒有華茂或拍檔設備。</p>'}
+      </form>` : '<p>此案件沒有設定供應商的設備。</p>'}
       ${bill.map(({inv, link, vendor}) => {
         const entries = Cases.invoiceLinks(state, c, vendor);
         const stateLabel = Cases.billStatus(c, inv, link, entries);
@@ -662,6 +667,25 @@
   function renderSapPrices() {
     const count=Cases.sapPriceCount();
     byId('caseSapPricesStatus').textContent=count?'已載入 '+count+' 項固定單價':'首次使用請選擇內部提供的 SAP_固定單價.json';
+  }
+  function refreshOrderSettings() {
+    const suppliers=OrderSettings.vendorNames();
+    for(const [id,all] of [['caseVendor',true],['caseImportVendor',false]]){
+      const node=byId(id), previous=node.value;
+      const names=all?['',...suppliers]:['拍檔',...suppliers.filter(name=>name!=='拍檔')];
+      node.innerHTML=names.map(name=>option(name,name||'全部',previous)).join('');
+    }
+    indexedCases=null;
+    render();
+  }
+  function checkOrderSettings(before,after) {
+    if(busy||actionBusy)throw Error('請等目前作業完成，再儲存自訂參數。');
+    const wouldChange = ({raw,item}) => {
+      const next=after.match(raw||item);
+      return next!==item||before.supplier(item)!==after.supplier(next);
+    };
+    if(state.cases.some(c=>c.pos.devices.some(wouldChange))||posImport?.rows?.some(p=>p.devices.some(wouldChange)))
+      throw Error('設定會改變目前案件的品項或供應商。請先匯出本次成果，重新整理後更新設定並重新匯入。');
   }
   async function importSapPrices(file) {
     validateFile(file,['json']);
@@ -747,7 +771,7 @@
         vendor !== '拍檔' || (r.taxId !== '27632985' && !/^華茂/.test(r.memo))).filter(r =>
         vendor !== '華茂' || !/^拍檔/.test(r.memo)).map(r => ({
         ...r, suggested: (!!r.quote && Cases.quoteKey(r.quote) === Cases.quoteKey(c.pos.quote)) ||
-          known.has(clean(r.no).toUpperCase()) || (r.pr && r.pr === c.pos.request && Cases.vendors.filter(v => Cases.hasVendor(c, v)).length === 1)
+          known.has(clean(r.no).toUpperCase()) || (r.pr && r.pr === c.pos.request && OrderSettings.vendorNames().filter(v => Cases.hasVendor(c, v)).length === 1)
       }));
     }
     if (!rows?.length) throw Error('這個檔案沒有可匯入的資料。');
@@ -1222,6 +1246,7 @@
       sourceMenu.querySelector('summary').focus();
     }
   });
-  render();
+  refreshOrderSettings();
   root.setAttribute?.('data-ready','');
+  return {checkOrderSettings,refreshOrderSettings};
 })();

@@ -427,7 +427,7 @@ const VendorDocs = (() => {
     if(!exact||slip.vendor!=='華茂'||slip.gross==null||slip.gross<=0||order.pos.issues.length||
         contactConflict||docPhones.length&&casePhones.length||address&&localAddress)return 0;
     const lines=order.pos.devices.filter(d=>vendorForItem(d.item)==='華茂'&&d.qty>0);
-    if(!lines.length||lines.some(d=>!Object.hasOwn(COST,d.item)))return 0;
+    if(!lines.length||lines.some(d=>!purchasePriceForItem(d.item)))return 0;
     const expected=hmAmount(aggregateVendorItems(lines));
     return expected>0&&Math.abs(expected-slip.gross)<=5?1:0;
   }
@@ -675,7 +675,7 @@ const VendorDocs = (() => {
       const grouped=new Map();
       for(const item of doc.items){
         const type=standardItem(item.name);
-        if(!HUAMAO_ITEMS.has(type))return null;
+        if(vendorForItem(type)!=='華茂')return null;
         const totals=grouped.get(type)||{qty:0,net:0};
         totals.qty+=item.quantity;
         totals.net+=Math.round(item.net*100);

@@ -630,3 +630,38 @@ button:not(:disabled), summary { cursor:pointer; }
     to { transform:translateX(358%); }
   }
 }
+
+.erp-settings-head {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px 16px;
+  border-block-end:1px solid var(--line);
+  padding-block-end:10px;
+}
+.erp-settings h1 { margin:0; }
+.erp-settings .case-btn[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent-border); color:var(--accent); }
+.erp-settings-select { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-block:14px; }
+.erp-settings-select > label { width:min(100%, 330px); }
+.erp-settings-form { display:grid; gap:12px; border-top:1px solid var(--line); padding-block-start:14px; }
+.erp-settings-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px; }
+.erp-settings label:has(input:not([type="file"]),textarea,select) { display:grid; gap:4px; min-width:0; }
+.erp-settings :is(input:not([type="file"]),textarea,select) {
+  width:100%;
+  min-width:0;
+  min-height:36px;
+  padding:.4rem .55rem;
+  border:1px solid var(--input-line);
+  background:var(--surface);
+  color:var(--ink);
+  font:inherit;
+}
+.erp-settings textarea { resize:vertical; }
+.erp-settings :is(input,textarea,select):focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
+.erp-settings input[readonly], .erp-settings pre { background:var(--surface-soft); }
+.erp-settings pre { margin:0; padding:12px; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+.erp-settings .case-meta { margin:0; }
+.erp-settings-head + .case-meta { margin-block:10px; }
+.erp-settings code { color:var(--accent); overflow-wrap:anywhere; }
+.erp-settings-feedback:empty { display:none; }

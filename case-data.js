@@ -31,7 +31,6 @@ const Cases = (() => {
   const sapPriceCount=()=>Object.keys(sapPrices).length;
   const sapPrinterItems = new Set(['P8802','EPSON發票機','WIFI發票機(M303)']);
   const paperItem = '發票紙捲';
-  const partnerSupplier = {code:'VAA0001432', id:'拍檔科技'};
   const hmHeaders = ['預計撥款日', '請款單號', '發票號碼', '發票日期', '說明', '金額', '已請款', '已撥款', '對帳單', '備註'];
   const billHeaders = ['來源列', 'SHOP ID', '報價單編號', '公司名稱', '供應商', '請款描述', '發票號碼',
     '發票日期', '金額（未稅）', '金額（含稅）', '處理狀態', '請款單號', '請款日期', '憑證來源', '備註'];
@@ -46,8 +45,8 @@ const Cases = (() => {
     }
     if (!order.pos.merchant) return '';
     if (vendor === '華茂') return hmDescription(agg, order.pos.merchant);
-    const parts = Object.entries(agg).map(([item, qty]) => PARTNER_ITEM_LABEL[item] + '*' + qty + '台');
-    return parts.length ? '拍檔出貨' + parts.join('+') + '至' + order.pos.merchant : '';
+    const parts = Object.entries(agg).map(([item, qty]) => (PARTNER_ITEM_LABEL[item]||item) + '*' + qty + vendorItemUnit(item));
+    return parts.length ? vendor + '出貨' + parts.join('+') + '至' + order.pos.merchant : '';
   };
   const hasVendor = (order, vendor) => order.pos.devices.some(d => vendorForItem(d.item) === vendor);
   const quoteKey = value => norm(value).replace(/^qu(?=\d{11}$)/, '');
@@ -217,7 +216,7 @@ const Cases = (() => {
   function invoiceData(input) {
     const no = clean(input.no).toUpperCase().replace(/[\s-]+/g, '');
     if (!/^[A-Z]{2}\d{8}$/.test(no)) throw Error('發票號碼請輸入 2 碼英文字母及 8 碼數字。');
-    if (!vendors.includes(input.vendor)) throw Error('請選擇有效的供應商。');
+    if (!OrderSettings.vendorNames().includes(input.vendor)) throw Error('請選擇有效的供應商。');
     const net = amount(input.net), gross = amount(input.gross), tax = amount(input.tax);
     if (net === null || gross === null) throw Error('請填未稅及含稅金額。');
     if (gross < net || (tax !== null && cents(gross) !== cents(net) + cents(tax))) throw Error('未稅加稅額應等於含稅金額。');
@@ -371,7 +370,7 @@ const Cases = (() => {
       }
       if (!entries.length) {
         const hw = p.devices.filter(d => vendorForItem(d.item) === '華茂' && d.qty > 0);
-        const estimated = hw.every(d => Object.hasOwn(COST, d.item)) ? hw.reduce((sum, d) => sum + d.qty * COST[d.item][0], 0) : null;
+        const estimated = hw.every(d => purchasePriceForItem(d.item)) ? hmAmount(aggregateVendorItems(hw)) : null;
         const shipments=typeof VendorDocs==='undefined'?[]:VendorDocs.documents(order).filter(d=>
           d.vendor==='華茂'&&d.kind==='銷貨單'&&d.parsed.invoiceNo&&d.parsed.invoiceDate&&!d.pair?.issues?.length);
         const doc=shipments.length===1?shipments[0].parsed:null;
@@ -529,9 +528,18 @@ const Cases = (() => {
   const sapNet = gross => Math.round(cents(gross)*100/105)/100;
   function sapPrice(item) {
     const key=clean(item).normalize('NFKC');
-    if (Object.hasOwn(sapPrices,key)) return sapPrices[key];
     const compact=key.replace(/\s+/g,'');
-    return Object.hasOwn(sapPrices,compact)?sapPrices[compact]:{};
+    const current=sapPrices[key]??sapPrices[compact];
+    const overrides=OrderSettings.item(item);
+    if(overrides?.saleNet==null&&overrides?.purchaseNet==null)return current||{};
+    const price={...current};
+    for(const kind of ['sale','purchase']){
+      const net=overrides[kind+'Net'];
+      if(net==null)continue;
+      price[kind+'Net']=net;
+      price[kind+'Gross']=configuredGross(net);
+    }
+    return price;
   }
   function sapNumeric(value) {
     const raw=clean(value).replace(/,/g,'');
@@ -666,8 +674,11 @@ const Cases = (() => {
       if (!caseIndex.has(k)) caseIndex.set(k, []);
       caseIndex.get(k).push(c);
     }
-    const hasHistoricalTotal=(inv,vendor)=>historical.some(row=>clean(row[24])===inv.no&&populated(row[17])&&
-      (!clean(row[21])||clean(row[21]).includes(vendor)));
+    const hasHistoricalTotal=(inv,vendor)=>{
+      const {sapName,code}=OrderSettings.vendor(vendor);
+      return historical.some(row=>clean(row[24])===inv.no&&populated(row[17])&&
+        (!clean(row[21])||clean(row[21]).includes(vendor)||sapName&&norm(row[21])===norm(sapName)||code&&norm(row[20])===norm(code)));
+    };
     const blockedHistory = new Set();
     const freightCandidates=new Map();
     for (const order of orders) {
@@ -694,7 +705,7 @@ const Cases = (() => {
       const devices = p.devices.filter(d => d.qty > 0)
         .map(d=>({...d,item:standardItem(clean(d.raw||d.item).normalize('NFKC'))}));
       if (!devices.length) report('缺少有效的設備明細');
-      const byVendor = Object.fromEntries(vendors.map(v => [v, invoiceLinks(state, order, v)]));
+      const byVendor = Object.fromEntries(OrderSettings.vendorNames().map(v => [v, invoiceLinks(state, order, v)]));
       const huamaoEntries=byVendor['華茂'];
       const draftVouchers=new Map(), draftTotals=[];
       for(const {inv,link} of huamaoEntries){
@@ -748,12 +759,14 @@ const Cases = (() => {
         }
         fillSapOrderDates(row,p);
         const partnerPrice=vendor==='拍檔'?sapPrice(d.item):null;
+        const supplier=vendor?OrderSettings.vendor(vendor):null;
         if (vendor === '拍檔') {
-          row[20]=partnerSupplier.code;
-          row[21]=partnerSupplier.id;
+          if(supplier.code)row[20]=supplier.code;
+          if(supplier.sapName)row[21]=supplier.sapName;
+        } else if(supplier) {
+          fill(20,supplier.code);
+          fill(21,supplier.sapName||vendor);
         }
-        if (vendor === '華茂') fill(20, 'VAA0000037');
-        fill(21, vendor === '華茂' ? '華茂資訊' : vendor);
         if (sale.no && populated(row[8]) && clean(row[8]) !== clean(sale.no)) report('既有銷售發票與補件不同，已保留原值');
         fill(8, sale.no); fill(9, sale.date);
         const prices = order.sale.lines?.find(l => l.slot === d.slot);
