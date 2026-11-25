@@ -200,7 +200,7 @@
   render();
   root.setAttribute('data-ready','');
   if(!enabled){
-    notice.textContent='此版本使用內建參數。請開啟有共用後端的版本來編輯。';
+    notice.textContent='GitHub Pages 版的參數為唯讀。';
     return;
   }
   lockWorkspace(true);

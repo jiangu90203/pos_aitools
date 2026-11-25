@@ -856,7 +856,7 @@ function downloadTextFile(name,text,type='text/plain') {
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.25#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.26#${name}"></use></svg>`;
 }
 const VENDOR_ORDER_CONTACTS = {
   華茂: {to:[['','elita.lin@bestpride.com.tw']], cc:[['','sales@bestpride.com.tw'],['','support@cyberbiz.io']]},

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 100" role="img" aria-labelledby="title">
+  <title id="title">POS 轉換、單據配對及例外檢核</title>
+  <style>
+    .tile{fill:#edf4ff;stroke:#a5bce3}
+    .symbol,.arrow{fill:none;stroke:#08358c;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+    text{fill:#193247;font:700 19px system-ui,"Microsoft JhengHei",sans-serif;text-anchor:middle}
+    @media(prefers-color-scheme:dark){
+      .tile{fill:#223c67;stroke:#6d8dbd}
+      .symbol,.arrow{stroke:#a6c6ff}
+      text{fill:#edf4ff}
+    }
+  </style>
+  <path class="tile" d="M1 5h136v90H1z M172 5h136v90H172z M343 5h136v90H343z"/>
+  <path class="arrow" d="M145 50h18m-5-5 5 5-5 5m158-5h18m-5-5 5 5-5 5"/>
+  <g class="symbol">
+    <path d="M57 20h24v24H57z M57 28h24m-16 0v16m8-16v16M57 36h24"/>
+    <path d="m237 34-3 3a5 5 0 0 1-7-7l6-6a5 5 0 0 1 7 0m3 9 3-3a5 5 0 0 1 7 7l-6 6a5 5 0 0 1-7 0m-5-5 10-10"/>
+    <path d="M402 20h18v26h-18z M407 34l3 3 5-6m-8 9h8"/>
+  </g>
+  <text x="69" y="74">品項正規化</text>
+  <text x="240" y="74">單據配對</text>
+  <text x="411" y="74">例外檢核</text>
+</svg>

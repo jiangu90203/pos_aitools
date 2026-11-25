@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 100" role="img" aria-labelledby="title">
+  <title id="title">匯入文件、核對案件及下載成果</title>
+  <style>
+    .tile{fill:#edf4ff;stroke:#a5bce3}
+    .symbol,.arrow{fill:none;stroke:#08358c;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+    text{fill:#193247;font:700 19px system-ui,"Microsoft JhengHei",sans-serif;text-anchor:middle}
+    @media(prefers-color-scheme:dark){
+      .tile{fill:#223c67;stroke:#6d8dbd}
+      .symbol,.arrow{stroke:#a6c6ff}
+      text{fill:#edf4ff}
+    }
+  </style>
+  <path class="tile" d="M1 5h136v90H1z M172 5h136v90H172z M343 5h136v90H343z"/>
+  <path class="arrow" d="M145 50h18m-5-5 5 5-5 5m158-5h18m-5-5 5 5-5 5"/>
+  <g class="symbol">
+    <path d="M57 34v10h24V34m-12 3V20m-6 6 6-6 6 6"/>
+    <path d="M228 22h24v22h-24z M234 33l4 4 8-9"/>
+    <path d="M399 34v10h24V34m-12-14v17m-6-6 6 6 6-6"/>
+  </g>
+  <text x="69" y="74">匯入文件</text>
+  <text x="240" y="74">核對案件</text>
+  <text x="411" y="74">下載成果</text>
+</svg>

@@ -716,3 +716,8 @@ button:not(:disabled), summary { cursor:pointer; }
   :where(input[type=file])::file-selector-button { transition:background-color 180ms ease,color 180ms ease,border-color 180ms ease; }
   @keyframes erp-view-in { from { opacity:.35; transform:translateY(3px); } }
 }
+
+.info-guide h2 { margin:0 0 12px; }
+.info-diagram { display:block; width:min(100%,480px); height:auto; }
+.info-points { margin:12px 0; padding-inline-start:1.45rem; }
+.info-points li + li { margin-block-start:5px; }
