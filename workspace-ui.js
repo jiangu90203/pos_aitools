@@ -52,6 +52,56 @@ const WorkspaceUI = (() => {
     narrow?.addEventListener?.('change', setNavigation);
   }
 
+  const progress = byId('erpProgress');
+  const progressLabel = byId('erpProgressLabel');
+  const tasks = new Set();
+  let progressTimer;
+  const activeTask = () => [...tasks].at(-1);
+  function drawProgress(task) {
+    progress.hidden = false;
+    progress.dataset.mode = task.percent === null ? 'pending' : 'measured';
+    progress.setAttribute('aria-label', task.label);
+    if (task.percent === null) progress.removeAttribute('aria-valuenow');
+    else progress.setAttribute('aria-valuenow', String(task.percent));
+    progress.style.setProperty('--progress-fraction', String((task.percent ?? 0) / 100));
+    progressLabel.textContent = task.percent === null ? task.label + '…' : task.label + ' · ' + task.percent + '%';
+  }
+
+  function beginProgress(label) {
+    if (!progress?.style || !progressLabel) return undefined;
+    const task = {label, percent:null, timer:0};
+    tasks.add(task);
+    clearTimeout(progressTimer);
+    if (!progress.hidden) drawProgress(task);
+    task.timer = setTimeout(() => {
+      if (activeTask() === task) drawProgress(task);
+    }, 120);
+    return {
+      update(label, completed, total) {
+        if (!tasks.has(task)) return;
+        task.label = label;
+        if (Number.isFinite(completed) && Number.isFinite(total) && total > 0) {
+          task.percent = Math.max(task.percent ?? 0, Math.min(99, Math.floor(completed * 100 / total)));
+        }
+        if (activeTask() === task && !progress.hidden) drawProgress(task);
+      },
+      end(completed) {
+        if (!tasks.has(task)) return;
+        const wasActive = activeTask() === task;
+        clearTimeout(task.timer);
+        tasks.delete(task);
+        if (!wasActive) return;
+        const next = activeTask();
+        if (next) {
+          drawProgress(next);
+        } else if (completed && task.percent !== null && !progress.hidden) {
+          drawProgress({...task,label:'處理完成',percent:100});
+          progressTimer = setTimeout(() => { progress.hidden = true; }, 360);
+        } else progress.hidden = true;
+      }
+    };
+  }
+
   const pane = byId('erpNotifications');
   const stack = byId('erpToastStack');
   const counter = byId('erpToastQueue');
@@ -121,5 +171,5 @@ const WorkspaceUI = (() => {
     display();
   }
 
-  return {notify};
+  return {notify,beginProgress};
 })();

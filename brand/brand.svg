@@ -1,9 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <title>設備請款助手 Pro</title>
-  <desc>採購箱與核對標記</desc>
-  <rect width="192" height="192" rx="40" fill="#172943"/>
-  <path d="M40 66l54-28 54 28v62l-54 29-54-29z" fill="#20559b" stroke="#bddcff" stroke-width="9" stroke-linejoin="round"/>
-  <path d="M40 66l54 29 54-29M94 95v62M69 51l54 29" fill="none" stroke="#bddcff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="138" cy="130" r="30" fill="#65e0bf" stroke="#172943" stroke-width="7"/>
-  <path d="m125 130 8 8 17-17" fill="none" stroke="#172943" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="64" height="64" fill="#193247"/>
+  <path fill="#f7fbfc" d="M14 10h23l11 11v12h-5V24H33V15H19v34h12v5H14z"/>
+  <path fill="#f7fbfc" d="M24 30h13v4H24zm0 9h8v4h-8z"/>
+  <path fill="#70d3c8" d="m35 46 6 6 13-14 4 4-17 18-10-10z"/>
 </svg>

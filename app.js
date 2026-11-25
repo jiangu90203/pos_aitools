@@ -847,7 +847,7 @@ function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.22#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.23#${name}"></use></svg>`;
 }
 // Central contact directory for supplier orders. All values are static deployment settings.
 const VENDOR_ORDER_CONTACTS = {
@@ -1301,8 +1301,9 @@ async function runAction(action){
   const buttons=[...document.querySelectorAll('#legacyWorkflows button,#legacyWorkflows input,#legacyWorkflows textarea:not([readonly])')];
   const states=buttons.map(b=>b.disabled);
   buttons.forEach(b=>{b.disabled=true;b.setAttribute('aria-busy','true');});
+  const progress=typeof WorkspaceUI==='undefined'?null:WorkspaceUI.beginProgress('處理作業');
   try{await action();}catch(err){reportOperationError(err.message||String(err));}
-  finally{buttons.forEach((b,i)=>{b.disabled=states[i];b.removeAttribute('aria-busy');});actionBusy=false;}
+  finally{progress?.end(false);buttons.forEach((b,i)=>{b.disabled=states[i];b.removeAttribute('aria-busy');});actionBusy=false;}
 }
 function updateSummary(total,paid=0,unpaid=0,diff=0,missing=0){
   arSummaryShown=total!=='—';

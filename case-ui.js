@@ -7,6 +7,7 @@
   const money = n => n == null ? '—' : Number(n).toLocaleString('zh-TW', {maximumFractionDigits: 2});
   const selected = new Set();
   let state = Cases.create();
+  let operationProgress;
   let current = '', staged = null, filterPage = 0, busy = false, stageToken = 0;
   let posImport = null, vendorPreview = null;
   let batchItems=[], pendingDocuments=[], batchView='', batchPage=0, batchAffected=new Set();
@@ -58,8 +59,16 @@
     if (busy) return;
     busy = true;
     byId('caseBusy').hidden = false;
-    try { await fn(); } catch (err) { status(err.message || '操作失敗，請檢查資料。', true); }
-    finally { busy = false; byId('caseBusy').hidden = true; }
+    operationProgress = typeof WorkspaceUI === 'undefined' ? null : WorkspaceUI.beginProgress('處理作業');
+    let completed = false;
+    try { await fn(); completed = true; }
+    catch (err) { status(err.message || '操作失敗，請檢查資料。', true); }
+    finally {
+      operationProgress?.end(completed);
+      operationProgress = null;
+      busy = false;
+      byId('caseBusy').hidden = true;
+    }
   }
   function billFlags(c,vendor) {
     if(c.pos.issues.length||c.review)return ['待核對設備'];
@@ -142,6 +151,7 @@
     const [workbook]=workbooks;
     const documents=files.filter(file=>file!==workbook);
     if(workbook&&(documents.length||queuedFiles.length)){
+      operationProgress?.update('載入 POS 工作簿');
       const rows=await ImportIO.excel(workbook,'pos');
       clearPosFile();
       if(staged){staged=null;renderPreview();}
@@ -171,6 +181,8 @@
     if(!files.length&&!pendingDocuments.length)return;
     batchItems=[...pendingDocuments];
     batchView=''; batchPage=0;
+    const steps=files.length+1;
+    operationProgress?.update('讀取 PDF 文件',0,steps);
     for(const [i,file] of files.entries()){
       status(`讀取文件 ${i+1} ／ ${files.length}`,false,{notify:false});
       await yieldUI();
@@ -183,7 +195,9 @@
       }catch(err){
         batchItems.push({name:file.name,file,type:'failed',reason:err.message||'無法讀取 PDF。'});
       }
+      operationProgress?.update('已讀取 '+(i+1)+' / '+files.length+' 份文件',i+1,steps);
     }
+    operationProgress?.update('比對與歸檔',files.length,steps);
     const items=batchItems.filter(item=>item.doc);
     const projected=positions?{...state}:state;
     const posResult=positions&&Cases.commitPos(projected,Cases.previewPos(state,positions));
@@ -237,6 +251,7 @@
     });
   }
   async function downloadVendorBatch() {
+    operationProgress?.update('打包歸檔檔案');
     const archive=XLSX.CFB.utils.cfb_new(), added=new Map(), casesByVendor=new Map(), filenames=new Map();
     const summary=[['狀態','公司名稱','POS 來源列','供應商','出貨單號','訂單單號','發票號碼','原始檔案','頁碼','說明']];
     const labels={linked:'成功歸檔',duplicate:'重複',unmatched:'待核對',failed:'解析失敗'};
@@ -720,6 +735,7 @@
       if(!c)throw Error('先在案件列表按「查看」，再匯入請款單匯出.xlsx。');
       if(!Cases.hasVendor(c,vendor))throw Error('此案件沒有此供應商的設備。');
     }
+    operationProgress?.update('載入工作簿');
     const projected=await ImportIO.excel(file,type,vendor);
     if(token!==stageToken)return;
     if(type==='pos'){preparePosRange(file.name,projected);return;}
@@ -906,6 +922,7 @@
     clearQuoteResult();
     const fields=Object.fromEntries(new FormData(form));
     const quote=Cases.quotationDocument(state,c,fields);
+    operationProgress?.update('產生報價 PDF');
     const bytes=await QuotePDF.create(quote);
     if(form!==byId('caseQuotationForm')||order()!==c)return;
     if(Object.keys(fields).some(key=>form.elements[key].value!==fields[key])){

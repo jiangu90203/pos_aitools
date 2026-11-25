@@ -3,8 +3,8 @@
   "short_name": "請款助手",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f0f4f9",
-  "theme_color": "#172943",
+  "background_color": "#edf2f3",
+  "theme_color": "#193247",
   "icons": [
     {
       "src": "brand/icon-192.png",
