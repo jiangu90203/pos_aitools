@@ -139,7 +139,7 @@ async function readGoogleSheetAsWorkbook(url){
   return wb;
 }
 function readArrayBuffer(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=e=>resolve(e.target.result);r.onerror=()=>reject(new Error('檔案讀取失敗，請確認檔案仍可存取。'));r.onabort=()=>reject(new Error('檔案讀取已中止。'));r.readAsArrayBuffer(file);});}
-if(window.pdfjsLib){pdfjsLib.GlobalWorkerOptions.workerSrc='vendor/pdf.worker.min.js';}
+if(typeof window!=='undefined'&&window.pdfjsLib){pdfjsLib.GlobalWorkerOptions.workerSrc='vendor/pdf.worker.min.js';}
 function pickRegex(text, patterns){for(const re of patterns){const m=text.match(re); if(m) return clean(m[1]);} return '';}
 function parseMoneyText(v){
   const s=clean(v).replace(/(?:NT\$|TWD|NTD|元|\$|,|\s)/gi,'');
@@ -847,8 +847,16 @@ function buildVendorMessageFromGroup(group){
 function escapeHtml(str){
   return String(str??'').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
+function downloadTextFile(name,text,type='text/plain') {
+  const url=URL.createObjectURL(new Blob([text],{type:type+';charset=utf-8'}));
+  const link=document.createElement('a');
+  link.href=url;
+  link.download=name;
+  link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
 function uiIcon(name) {
-  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.24#${name}"></use></svg>`;
+  return `<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="vendor/pulso-icons.svg?v=15.25#${name}"></use></svg>`;
 }
 const VENDOR_ORDER_CONTACTS = {
   華茂: {to:[['','elita.lin@bestpride.com.tw']], cc:[['','sales@bestpride.com.tw'],['','support@cyberbiz.io']]},
@@ -881,7 +889,6 @@ function renderOrderTemplate(template, values) {
 const configuredGross = net => Math.round(Math.round(net*100)*105/100)/100;
 
 const OrderSettings = (() => {
-  const storageKey='posEquipment.orderSettings.v1';
   const builtInItems=[...new Set([...HUAMAO_ITEMS,...PARTNER_ITEMS,...Object.keys(SALES),...Object.keys(COST),
     'Mypay刷卡機商米','客戶顯示器','POS主機PosiflexXT-3815G2'])];
   const builtInKeys=new Map(builtInItems.map(name=>[itemLookupKey(name),name]));
@@ -974,26 +981,22 @@ const OrderSettings = (() => {
     const supplier=item=>items.get(item)?.vendor??itemDefaults(item).vendor;
     return {data,items,vendors,match,supplier};
   }
-  let current=compile(blank()), readError=false;
-  if(typeof window!=='undefined')try{
-    const stored=window.localStorage?.getItem(storageKey);
-    if(stored)current=compile(JSON.parse(stored));
-  }catch{readError=true;}
-  function save(raw,check) {
+  let current=compile(blank());
+  function prepare(raw,check) {
     const next=compile(raw);
     check?.(current,next);
-    try{window.localStorage.setItem(storageKey,JSON.stringify(next.data));}
-    catch{throw Error('此瀏覽器無法保存自訂參數，請檢查本機儲存設定。');}
-    current=next;
-    readError=false;
+    return next.data;
   }
-  return {save,load:raw=>{current=compile(raw);},readError:()=>readError,snapshot:()=>current.data,
+  return {prepare,load:raw=>{current=compile(raw);},snapshot:()=>current.data,
     match:raw=>current.match(raw),item:name=>current.items.get(name),itemDefaults,
     itemNames:()=>[...new Set([...builtInItems,...current.items.keys()])],
     vendor:name=>current.vendors.get(name)||vendorDefaults(name),vendorDefaults,
     vendorNames:()=>[...new Set([...builtInVendors,...current.vendors.keys()])],
     isBuiltInItem:name=>builtInItems.includes(name),isBuiltInVendor:name=>builtInVendors.includes(name)};
 })();
+
+// The settings API and browser validate the same profile format.
+globalThis.OrderSettings = OrderSettings;
 
 function vendorCommunication(vendor,messages) {
   if(!messages.length)return {subject:'',body:'',line:''};
@@ -1254,14 +1257,14 @@ function setStartRowToNext(){
   document.getElementById('startRow').value=String(last?last+1:1);
 }
 if(typeof document!=='undefined'){
-document.getElementById('startFromFirst').addEventListener('click',setStartRowToFirst);
-document.getElementById('startFromLast').addEventListener('click',setStartRowToNext);
+document.getElementById('startFromFirst')?.addEventListener('click',setStartRowToFirst);
+document.getElementById('startFromLast')?.addEventListener('click',setStartRowToNext);
 updateLastRowInfo();
-document.getElementById('hmBtn').addEventListener('click',()=>runAction(generateHuamao));
+document.getElementById('hmBtn')?.addEventListener('click',()=>runAction(generateHuamao));
 document.getElementById('arCompareBtn').addEventListener('click',()=>runAction(compareHuamaoAr));
 document.getElementById('arQueryBtn').addEventListener('click',()=>runAction(queryHuamaoStatus));
 document.getElementById('arQueryExportBtn').addEventListener('click',()=>runAction(exportArQueryResults));
-document.getElementById('hmSalesFiles').addEventListener('change',e=>{
+document.getElementById('hmSalesFiles')?.addEventListener('change',e=>{
   const valid=[],errors=[];
   for(const file of e.target.files){
     try{validateFile(file,['pdf']);valid.push(file);}catch(err){errors.push(file.name+'：'+err.message);}
@@ -1270,7 +1273,7 @@ document.getElementById('hmSalesFiles').addEventListener('change',e=>{
   document.getElementById('hmStatus').textContent=errors.join('；');
   if(errors.length)reportOperationError(errors.join('；'));
 });
-document.getElementById('clearSalesFiles').addEventListener('click',()=>{hmSalesFileList=[];renderSalesFileList();});
+document.getElementById('clearSalesFiles')?.addEventListener('click',()=>{hmSalesFileList=[];renderSalesFileList();});
 renderSalesFileList();
 }
 
@@ -1306,7 +1309,7 @@ document.getElementById('vendorNextBatch')?.addEventListener('click',setVendorNe
 updateVendorLastRowInfo();
 document.getElementById('generateVendorMsgBtn')?.addEventListener('click',()=>runAction(generateVendorMessages));
 
-document.getElementById('convertBtn').addEventListener('click',()=>runAction(convert));
+document.getElementById('convertBtn')?.addEventListener('click',()=>runAction(convert));
 document.getElementById('vendorGroupResults')?.addEventListener('click',e=>{
   const btn=e.target.closest?.('button');
   if(!btn)return;
@@ -1429,7 +1432,7 @@ let actionBusy=false;
 async function runAction(action){
   if(actionBusy)return;
   actionBusy=true;
-  const buttons=[...document.querySelectorAll('#legacyWorkflows button,#legacyWorkflows input,#legacyWorkflows textarea:not([readonly])')];
+  const buttons=[...document.querySelectorAll('#reconciliationView button,#reconciliationView input,#reconciliationView textarea:not([readonly])')];
   const states=buttons.map(b=>b.disabled);
   buttons.forEach(b=>{b.disabled=true;b.setAttribute('aria-busy','true');});
   const progress=typeof WorkspaceUI==='undefined'?null:WorkspaceUI.beginProgress('處理作業');
@@ -1516,19 +1519,17 @@ function initTableGrip(grip,table) {
 
 function showErpView() {
   const hash=window.location.hash.slice(1);
-  const direct=['hm','invoice','vendorMsg'];
   const info=['logPanel','rules','helpPanel'];
-  const pages=['caseWorkspace','legacyWorkflows','ar','customSettings','systemInfo'];
-  const view=direct.includes(hash)?'legacyWorkflows':info.includes(hash)?'systemInfo':pages.includes(hash)?hash:'caseWorkspace';
+  const pages=['caseWorkspace','ar','customSettings','systemInfo'];
+  const view=info.includes(hash)?'systemInfo':pages.includes(hash)?hash:'caseWorkspace';
   const show=(id,on)=>{const node=document.getElementById(id);if(node)node.hidden=!on;};
   for(const id of ['caseWorkspace','customSettings','systemInfo'])show(id,view===id);
   const infoPage=info.includes(hash)?hash:'logPanel';
   for(const id of info)show(id,view==='systemInfo'&&infoPage===id);
   if(view==='systemInfo'&&infoPage==='logPanel')flushLog();
-  show('legacyWorkflows',view==='legacyWorkflows'||view==='ar');
+  show('reconciliationView',view==='ar');
   show('arDashboard',view==='ar');
   show('ar',view==='ar');
-  for(const id of direct)show(id,view==='legacyWorkflows');
   for(const link of document.querySelectorAll('[data-erp-view],[data-info-page]')){
     if(!link.dataset?.erpView&&!link.dataset?.infoPage)continue;
     if(link.dataset.erpView===view||link.dataset.infoPage===infoPage)link.setAttribute('aria-current','page');

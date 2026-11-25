@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <title>設備請款助手 Pro</title>
-  <rect width="64" height="64" fill="#193247"/>
+  <rect width="64" height="64" fill="#08358c"/>
   <path fill="#f7fbfc" d="M14 10h23l11 11v12h-5V24H33V15H19v34h12v5H14z"/>
   <path fill="#f7fbfc" d="M24 30h13v4H24zm0 9h8v4h-8z"/>
-  <path fill="#70d3c8" d="m35 46 6 6 13-14 4 4-17 18-10-10z"/>
+  <path fill="#a6c6ff" d="m35 46 6 6 13-14 4 4-17 18-10-10z"/>
 </svg>

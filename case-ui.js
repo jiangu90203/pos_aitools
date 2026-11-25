@@ -37,7 +37,11 @@ const CaseWorkspace = (() => {
       }
     }
   }
-  const focused = () => state.cases.filter(c => selected.has(c.id));
+  const activeVendor=()=>byId('caseVendor').value;
+  const focused = () => {
+    const vendor=activeVendor();
+    return state.cases.filter(c=>selected.has(c.id)&&(!vendor||caseIndex.get(c.id).vendors.includes(vendor)));
+  };
   const field = (name, label, value = '', type = 'text', attrs = '') =>
     `<label>${e(label)}<input name="${e(name)}" type="${type}" value="${e(value)}" ${attrs}></label>`;
   const option = (v, label, val) => `<option value="${e(v)}"${v === val ? ' selected' : ''}>${e(label)}</option>`;
@@ -363,10 +367,21 @@ const CaseWorkspace = (() => {
   }
   function renderSelection(count) {
     if(count===undefined)scheduleOrderPreview();
+    const orders=focused();
+    const vendor=activeVendor();
+    const suppliers=new Set(vendor?[vendor]:orders.flatMap(c=>caseIndex.get(c.id).vendors));
     byId('caseCount').textContent=`共 ${state.cases.length} 案｜符合 ${count??lookupCount} 案｜已勾選 ${selected.size} 案`;
-    byId('caseSelectedCount').textContent='已勾選 '+selected.size+' 案';
+    byId('caseSelectedCount').textContent=(vendor?vendor+' · ':'')+'適用 '+orders.length+' 案'+
+      (orders.length!==selected.size?'（其餘 '+(selected.size-orders.length)+' 案不列入）':'');
+    const payDate=byId('casePayDateLabel');
+    payDate.hidden=!orders.length||!suppliers.has('華茂');
+    for(const option of Object.values(exports)){
+      const button=byId(option.id);
+      button.hidden=!orders.length||Boolean(option.vendor&&!suppliers.has(option.vendor));
+    }
     byId('caseBatchActions').hidden=!selected.size;
-    if(!selected.size)showOrders=false;
+    byId('caseOrderToggle').hidden=!orders.length||!suppliers.size;
+    if(!orders.length||!suppliers.size)showOrders=false;
     byId('caseOrderSection').hidden=!showOrders;
     byId('caseOrderToggle').setAttribute?.('aria-expanded',String(showOrders));
     const pageCheck=byId('caseSelectPage');
@@ -874,6 +889,7 @@ const CaseWorkspace = (() => {
     if(orderDirty){
       ordersByVendor=new Map();
       for(const c of focused())for(const msg of Cases.orderMessages(c)){
+        if(activeVendor()&&msg.vendor!==activeVendor())continue;
         if(!ordersByVendor.has(msg.vendor))ordersByVendor.set(msg.vendor,[]);
         ordersByVendor.get(msg.vendor).push(msg);
       }
@@ -896,6 +912,7 @@ const CaseWorkspace = (() => {
             <label>內文<textarea readonly rows="7" aria-label="${e(vendor)} Email 內文">${e(body)}</textarea></label>
             <div class="case-actions">
               <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="email">${uiIcon('copy')} 複製 Email</button>
+              <button type="button" class="case-btn" data-order-download="${e(vendor)}" data-channel="email">${uiIcon('download')} 下載 Email</button>
               <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="subject">複製主旨</button>
               <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="body">複製內文</button>
               <button type="button" class="case-btn primary" data-order-gmail="${e(vendor)}">${uiIcon('brand-gmail')} 使用 Gmail 撰寫</button>
@@ -903,7 +920,8 @@ const CaseWorkspace = (() => {
             </div></div>
           <div class="erp-channel"><strong>${uiIcon('brand-line')} LINE</strong>
             <label>下單文字<textarea readonly rows="9" aria-label="${e(vendor)} LINE 下單文字">${e(line)}</textarea></label>
-            <button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="line">${uiIcon('copy')} 複製 LINE</button>
+            <div class="case-actions"><button type="button" class="case-btn" data-order-copy="${e(vendor)}" data-channel="line">${uiIcon('copy')} 複製 LINE</button>
+            <button type="button" class="case-btn" data-order-download="${e(vendor)}" data-channel="line">${uiIcon('download')} 下載 LINE</button></div>
           </div></div></section>`;
     }).join('')||'<p class="case-meta">勾選有有效設備的案件後，可依供應商取得下單文字。</p>';
   }
@@ -967,10 +985,10 @@ const CaseWorkspace = (() => {
     status('已要求下載「' + label + '」。',false,{notify:false});
   }
   const exports={
-    partner:orders=>write(Cases.billWorkbook(state,orders),'拍檔請款彙整'),
-    'partner-ready':orders=>write(Cases.billWorkbook(state,orders,true),'拍檔請款_可填請款'),
-    hm:orders=>write(Cases.huamaoWorkbook(state,orders,Cases.date(byId('casePayDate').value)),'華茂款項匯入資訊'),
-    sap:orders=>write(Cases.sapWorkbook(state,orders),'SAP_Key-in準備表')
+    partner:{id:'caseExportPartner',vendor:'拍檔',run:orders=>write(Cases.billWorkbook(state,orders),'拍檔請款彙整')},
+    'partner-ready':{id:'caseExportPartnerReady',vendor:'拍檔',run:orders=>write(Cases.billWorkbook(state,orders,true),'拍檔請款_可填請款')},
+    hm:{id:'caseExportHuamao',vendor:'華茂',run:orders=>write(Cases.huamaoWorkbook(state,orders,Cases.date(byId('casePayDate').value)),'華茂款項匯入資訊')},
+    sap:{id:'caseExportSap',run:(orders,vendor)=>write(Cases.sapWorkbook(state,orders,vendor),'SAP_Key-in準備表'+(vendor?'_'+vendor:''))}
   };
   function closeDetail() {
     current='';vendorPreview=null;
@@ -1054,12 +1072,11 @@ const CaseWorkspace = (() => {
       line.checked = Boolean(s.line); line.disabled = !s.email;
     } else if (['caseVendor','caseDocumentFilter'].includes(target.id)) {
       filterPage = 0; renderList();
+      if(target.id==='caseVendor')scheduleOrderPreview();
     } else if(target.form?.id==='caseInvoiceForm'&&target.name==='vendor'){
       const {elements,dataset}=target.form;
       if(dataset.autoNo&&elements.no.value===dataset.autoNo)elements.no.value='';
       if(dataset.autoDate&&elements.date.value===dataset.autoDate)elements.date.value='';
-    } else if(target.id==='caseExportKind'){
-      byId('casePayDateLabel').hidden=target.value!=='hm';
     }
   });
   root.addEventListener('click', event => {
@@ -1075,6 +1092,19 @@ const CaseWorkspace = (() => {
       return;
     }
     if(b.dataset.orderCopy){action(()=>copyOrders(b.dataset.orderCopy,b.dataset.channel));return;}
+    if(b.dataset.orderDownload){
+      action(()=>{
+        const vendor=b.dataset.orderDownload, messages=selectedOrders().get(vendor);
+        if(!messages?.length)throw Error('請先勾選有效的下單案件。');
+        const {subject,body,line}=vendorCommunication(vendor,messages), email=b.dataset.channel==='email';
+        const {to,cc}=vendorRecipients(vendor), addresses=list=>list.map(([,address])=>address).join(', ');
+        const output=email?['To: '+addresses(to),'CC: '+addresses(cc),'主旨：'+subject,'',body].join('\n'):line;
+        const filename=vendor.replace(/[\\/:*?"<>|]/g,'_')+'_'+(email?'Email':'LINE')+'_'+formatToday()+'.txt';
+        downloadTextFile(filename,output+'\n');
+        status('已要求下載 '+filename+'。',false,{tone:'success'});
+      });
+      return;
+    }
     if(b.dataset.orderGmail){openVendorGmail(b.dataset.orderGmail);return;}
     if(b.dataset.docPage!==undefined){
       const page=Number(b.dataset.docPage);
@@ -1148,22 +1178,20 @@ const CaseWorkspace = (() => {
       review: () => { order().review = false; render(); },
       'select-filter': () => { for(const c of lookup()) selected.add(c.id); renderSelection(); },
       'clear-select': () => { selected.clear(); renderSelection(); },
-      'export-selected':async()=>{
-        const exportBook=exports[byId('caseExportKind').value];
-        if(!exportBook)throw Error('請選擇匯出格式。');
-        const orders=checkBills();
-        status(`正在整理 ${orders.length} 個案件的 Excel…`,false,{notify:false});
-        await yieldUI();
-        exportBook(orders);
-      },
       'toggle-order':()=>{
         showOrders=!showOrders;
         renderSelection(lookupCount);
         if(showOrders)drawOrderPreview();
       },
     };
-    const handler = handlers[b.dataset.caseAction] ||
-      (Object.hasOwn(exports,b.dataset.caseAction)?()=>exports[b.dataset.caseAction](checkBills()):null);
+    const exp=Object.hasOwn(exports,b.dataset.caseAction)?exports[b.dataset.caseAction]:null;
+    const handler = handlers[b.dataset.caseAction] || (exp&& (async()=>{
+      const vendor=activeVendor(), orders=checkBills();
+      if(exp.vendor&&(vendor&&vendor!==exp.vendor||!orders.some(c=>Cases.hasVendor(c,exp.vendor))))throw Error('沒有符合此供應商的勾選案件。');
+      status(`正在整理 ${orders.length} 個案件的 Excel…`,false,{notify:false});
+      await yieldUI();
+      exp.run(orders,vendor);
+    }));
     if (handler) action(handler);
   });
   root.addEventListener('submit', event => {

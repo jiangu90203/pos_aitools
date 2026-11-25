@@ -661,7 +661,7 @@ const Cases = (() => {
       }
     }
   }
-  function sapWorkbook(state, orders) {
+  function sapWorkbook(state, orders, vendorScope='') {
     const rows = [], notes = [], historical = state.sap?.rows || [];
     const historyIndex = new Map(), caseIndex = new Map();
     for (const row of historical) {
@@ -873,14 +873,21 @@ const Cases = (() => {
     }
     if (!rows.length && !notes.length) throw Error('勾選的案件沒有可輸出的設備資料。');
     const book = XLSX.utils.book_new();
-    const output=rows.flatMap(row=>freightAfter.has(row)?[row,freightAfter.get(row)]:[row]);
+    const eligible=vendorScope?rows.filter(row=>{
+      const itemVendor=vendorForItem(row[13]);
+      if(itemVendor)return itemVendor===vendorScope;
+      const supplier=OrderSettings.vendor(vendorScope);
+      return Boolean(supplier.code&&norm(row[20])===norm(supplier.code)||supplier.sapName&&norm(row[21])===norm(supplier.sapName));
+    }):rows;
+    const output=eligible.flatMap(row=>freightAfter.has(row)?[row,freightAfter.get(row)]:[row]);
+    if(vendorScope&&eligible.length!==rows.length)notes.push(['','','','此表限 '+vendorScope+'。其他供應商或無供應商的設備未列入，完整資料請使用「全部」匯出。']);
     formatSapDates(addSheet(book, sapName, sapHeaders, output), output.length);
     if(output.length){
       book.Workbook={Names:[{Name:'SAP_Copy_Range',Ref:"'"+sapName+"'!$A$2:$AC$"+(output.length+1)}]};
     }
     const unique = [...new Map(notes.map(n => [JSON.stringify(n), n])).values()];
     if (unique.length) addSheet(book, '待確認', ['來源列', '報價單編號', '公司名稱', '待確認事項'], unique);
-    appendVendorSheets(book,state,orders);
+    appendVendorSheets(book,state,orders,vendorScope);
     return book;
   }
   function requestRows(wb, vendor, source) {
@@ -945,5 +952,5 @@ const Cases = (() => {
   return {vendors, sapName, sapHeaders, hmHeaders, create, desc, hasVendor, quoteKey, date, amount, posRows, previewPos,
     commitPos, attachInvoice, correctInvoice, invoiceLinks, invoiceData, allocation, linkSlots, billStatus, descriptionFor,
     isReady, orderMessages, billWorkbook, huamaoWorkbook, sapTemplate, quotationRows, salesCandidates,
-    sapWorkbook, requestRows, restore, quotationDocument, setSapPrices, sapPriceCount};
+    sapWorkbook, requestRows, restore, quotationDocument, setSapPrices, sapPriceCount, sapPrice};
 })();

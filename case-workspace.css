@@ -268,18 +268,18 @@ button:not(:disabled), summary { cursor:pointer; }
   color-scheme:light;
   --ink:#193247;
   --muted:#4f6075;
-  --canvas:#edf2f3;
+  --canvas:#edf2fa;
   --surface:#ffffff;
-  --surface-soft:#f5f8f8;
-  --surface-raised:#e5edee;
-  --line:#cbd6da;
-  --input-line:#a6b9bf;
-  --accent:#0e675f;
-  --accent-soft:#e3f1ee;
-  --accent-border:#8aaea9;
-  --focus:#0e7068;
-  --primary:#0d625b;
-  --primary-hover:#0b4d47;
+  --surface-soft:#f5f8fe;
+  --surface-raised:#e6eefb;
+  --line:#ced9ec;
+  --input-line:#a4b6d4;
+  --accent:#08358c;
+  --accent-soft:#e2edff;
+  --accent-border:#91abd7;
+  --focus:#1d54b7;
+  --primary:#08358c;
+  --primary-hover:#062863;
   --on-primary:#fff;
   --success:#176348;
   --success-soft:#e6f5ed;
@@ -290,11 +290,11 @@ button:not(:disabled), summary { cursor:pointer; }
   --violet:#655398;
   --violet-soft:#f0ebfb;
   --rule:#193247;
-  --nav-bg:#e5ecee;
+  --nav-bg:#e6eef9;
   --nav-ink:#294052;
-  --nav-hover:#d7e4e8;
+  --nav-hover:#d6e4fb;
   --nav-active:#193247;
-  --nav-indicator:#6ad1c7;
+  --nav-indicator:#7faaff;
   --shadow:#14284530;
   --topbar-height:66px;
   --nav-width:222px;
@@ -309,12 +309,12 @@ button:not(:disabled), summary { cursor:pointer; }
   --surface-raised:#233448;
   --line:#344559;
   --input-line:#52647a;
-  --accent:#97dbd0;
-  --accent-soft:#244344;
-  --accent-border:#558984;
-  --focus:#91d5c7;
-  --primary:#12716a;
-  --primary-hover:#11605b;
+  --accent:#abcaff;
+  --accent-soft:#223c67;
+  --accent-border:#5c7cae;
+  --focus:#a6c6ff;
+  --primary:#2459b6;
+  --primary-hover:#1c4690;
   --success:#8ee0ba;
   --success-soft:#1c3c36;
   --warning:#ffd092;
@@ -323,12 +323,12 @@ button:not(:disabled), summary { cursor:pointer; }
   --danger-soft:#4a2835;
   --violet:#cbb8ff;
   --violet-soft:#33294d;
-  --rule:#5c838a;
+  --rule:#5a7bb5;
   --nav-bg:#131e2c;
   --nav-ink:#e5edf7;
-  --nav-hover:#203240;
-  --nav-active:#254651;
-  --nav-indicator:#76decd;
+  --nav-hover:#203550;
+  --nav-active:#244272;
+  --nav-indicator:#90b9ff;
   --shadow:#070d18aa;
 }
 .app {
@@ -417,14 +417,17 @@ button:not(:disabled), summary { cursor:pointer; }
 }
 .nav a:hover { background:var(--nav-hover); }
 .nav a[aria-current="page"] { background:var(--nav-active); color:#fff; }
-.nav a[aria-current="page"]::before {
+.nav a::before {
   content:"";
   position:absolute;
   inset:11px auto 11px 0;
   width:3px;
 
   background:var(--nav-indicator);
+  opacity:0;
+  transform:scaleY(.55);
 }
+.nav a[aria-current="page"]::before { opacity:1; transform:scaleY(1); }
 .nav a:focus-visible { outline-color:var(--nav-indicator); outline-offset:-2px; }
 .nav a .ui-icon { width:20px; height:20px; margin:0; }
 .app[data-nav="collapsed"] .nav a { justify-content:center; padding-inline:0; }
@@ -642,8 +645,6 @@ button:not(:disabled), summary { cursor:pointer; }
 }
 .erp-settings h1 { margin:0; }
 .erp-settings .case-btn[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent-border); color:var(--accent); }
-.erp-settings-select { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-block:14px; }
-.erp-settings-select > label { width:min(100%, 330px); }
 .erp-settings-form { display:grid; gap:12px; border-top:1px solid var(--line); padding-block-start:14px; }
 .erp-settings-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px; }
 .erp-settings label:has(input:not([type="file"]),textarea,select) { display:grid; gap:4px; min-width:0; }
@@ -665,3 +666,53 @@ button:not(:disabled), summary { cursor:pointer; }
 .erp-settings-head + .case-meta { margin-block:10px; }
 .erp-settings code { color:var(--accent); overflow-wrap:anywhere; }
 .erp-settings-feedback:empty { display:none; }
+
+.settings-list-actions:not(:empty) { margin-block:10px; }
+.settings-table-viewport { overflow:auto; }
+.settings-table { border-collapse:collapse; width:100%; min-width:580px; }
+.settings-table th,.settings-table td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.settings-table thead { background:var(--surface-raised); }
+.settings-table td:last-child { width:1%; white-space:nowrap; }
+.settings-table tbody tr:nth-child(even) { background:var(--surface-soft); }
+.settings-fields { margin:0; padding:0; min-width:0; display:grid; gap:12px; border:0; }
+.erp-settings-form h2 { margin:0; }
+.settings-vendor-options { display:flex; flex-wrap:wrap; gap:8px 16px; margin:0; padding:9px; border:1px solid var(--line); }
+.settings-vendor-options label:has(input[type=radio]) { display:inline-flex; align-items:center; }
+.erp-settings input[type=radio] { width:auto; min-height:0; accent-color:var(--primary); }
+.settings-remove { justify-self:start; }
+:where(input[type=file]):not(.case-upload input) {
+  min-height:37px;
+  width:100%;
+  max-width:100%;
+  color:var(--muted);
+  font:inherit;
+}
+:where(input[type=file]):not(.case-upload input)::file-selector-button {
+  margin-inline-end:10px;
+  padding:7px 10px;
+  border:1px solid var(--accent-border);
+  color:var(--accent);
+  background:var(--accent-soft);
+  font:inherit;
+  font-weight:650;
+  cursor:pointer;
+}
+:where(input[type=file]):not(.case-upload input):hover::file-selector-button {
+  color:var(--on-primary);
+  background:var(--primary);
+  border-color:var(--primary);
+}
+:where(input[type=file]):focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.case-upload:has(input:disabled) { opacity:.55; }
+@media (prefers-reduced-motion:no-preference) {
+  .nav a,.erp-info-nav .case-btn,.case-btn {
+    transition:background-color 220ms cubic-bezier(.2,.65,.3,1),border-color 220ms ease,color 170ms ease;
+  }
+  .nav a::before { transition:opacity 180ms ease,transform 220ms cubic-bezier(.2,.65,.3,1); }
+  :is(#caseWorkspace,#reconciliationView,#customSettings,#systemInfo):not([hidden]),
+  #orderSettingsContent > :is(.erp-settings-form,.settings-table-viewport) {
+    animation:erp-view-in 200ms cubic-bezier(.2,.65,.3,1) both;
+  }
+  :where(input[type=file])::file-selector-button { transition:background-color 180ms ease,color 180ms ease,border-color 180ms ease; }
+  @keyframes erp-view-in { from { opacity:.35; transform:translateY(3px); } }
+}
